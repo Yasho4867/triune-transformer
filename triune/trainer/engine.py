@@ -11,6 +11,24 @@ class TrainingEngine:
     def __init__(self, trainer):
         self.trainer = trainer
 
+
+    @property
+    def model(self):
+        return self.trainer.model
+
+    @property
+    def optimizer(self):
+        return self.trainer.optimizer
+
+    @property
+    def config(self):
+        return self.trainer.config
+
+    @property
+    def device(self):
+        return self.trainer.device
+
+
     def train(self):
 
         try:
