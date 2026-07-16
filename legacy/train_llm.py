@@ -513,15 +513,8 @@ def model_autocast():
         return te_autocast(enabled=True, recipe=nvfp4_recipe)
     return autocast('cuda', dtype=torch.bfloat16)
 
-def sigint_handler(sig, frame):
-    print("\n⚠️ KeyboardInterrupt – saving checkpoint...")
-    save_latest(step, 0.0)
-    sys.exit(0)
 
-def sigterm_handler(sig, frame):
-    print("\n⚠️ SIGTERM received – saving checkpoint...")
-    save_latest(step, 0.0)
-    sys.exit(0)
+# moved to triune.trainer.callbacks
 
 signal.signal(signal.SIGINT, sigint_handler)
 signal.signal(signal.SIGTERM, sigterm_handler)
