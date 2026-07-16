@@ -25,3 +25,19 @@ def save_best(step, loss):
         "wandb_run_id": wandb.run.id if not args.no_wandb else None,
     }, os.path.join(config["checkpoint_dir"], "best.pt"))
 
+# ─── Data loaders ──────────────────────────────────────────────
+eval_dataloader = get_dataloader(is_holdout=True)
+eval_iter = iter(eval_dataloader)
+eval_batches = []
+for _ in range(config["eval_batches"]):
+    try:
+        x, y = next(eval_iter)
+    except StopIteration:
+        print("⚠️ Eval stream exhausted, re-iterating")
+        eval_iter = iter(eval_dataloader)
+        x, y = next(eval_iter)
+    eval_batches.append((x, y))
+
+train_dataloader = get_dataloader(is_holdout=False)
+data_iter = iter(train_dataloader)
+
