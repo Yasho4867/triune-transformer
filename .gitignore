@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# W&B
+wandb/
+wandb_logs/
+
+# Hugging Face cache
+.cache/
+
+# Model checkpoints
+checkpoints/
+checkpoints_full/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Large local datasets
+my_data.txt
+tokenized_data.pt
+
+# Compiled caches
+unsloth_compiled_cache/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Secrets
+.env
+.env.*
+
+# Nested repositories
+TransformerEngine/
+TransformerEngine_Native/
+cutlass/

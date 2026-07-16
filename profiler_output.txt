@@ -1,0 +1,25 @@
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  
+                                                   Name    Self CPU %      Self CPU   CPU total %     CPU total  CPU time avg    # of Calls  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  
+           torch\nn\modules\module.py(1782): _call_impl         0.03%      16.255ms        98.70%       48.494s      12.154ms          3990  
+                              profiler.py(50): <module>         0.04%      20.966ms        63.83%       31.362s       31.362s             1  
+                        torch\_tensor.py(576): backward         0.00%      99.600us        36.49%       17.929s        1.793s            10  
+              torch\autograd\__init__.py(253): backward         0.00%     431.800us        36.49%       17.929s        1.793s            10  
+     torch\autograd\graph.py(869): _engine_run_backward         0.00%     180.800us        36.49%       17.928s        1.793s            10  
+<built-in method run_backward of torch._C._EngineBas...        36.49%       17.928s        36.49%       17.928s        1.793s            10  
+                         nn.Module: TriuneTransformer_0         0.00%      92.500us        26.92%       13.224s        1.322s            10  
+                                 model.py(157): forward         0.00%     611.400us        26.92%       13.223s        1.322s            10  
+                             model.py(142): _run_prefix         0.00%     936.200us        26.65%       13.094s        1.309s            10  
+                          model.py(134): _forward_block         0.00%     744.000us        26.64%       13.091s      54.544ms           240  
+                                  model.py(93): forward         0.02%       7.379ms        26.64%       13.088s      54.532ms           240  
+                                           aten::linear         0.07%      32.085ms        18.94%        9.306s       3.051ms          3050  
+    autograd::engine::evaluate_function: AddmmBackward0         0.07%      32.691ms        16.39%        8.053s       4.109ms          1960  
+               torch\nn\modules\linear.py(130): forward         0.08%      38.046ms        11.57%        5.684s       2.871ms          1980  
+                             <built-in function linear>         0.03%      13.343ms        11.49%        5.643s       2.850ms          1980  
+                                  model.py(36): forward         0.04%      20.691ms        10.26%        5.042s      21.008ms           240  
+                                         AddmmBackward0         0.05%      25.958ms         9.88%        4.856s       2.478ms          1960  
+                                               aten::mm         9.76%        4.794s         9.76%        4.794s       1.223ms          3920  
+                                  model.py(65): forward         0.02%      12.101ms         9.74%        4.784s      28.139ms           170  
+                                              aten::mul         9.58%        4.708s         9.58%        4.708s     743.831us          6330  
+-------------------------------------------------------  ------------  ------------  ------------  ------------  ------------  ------------  
+Self CPU time total: 49.130s
