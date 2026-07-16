@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from .config import *
 class FP4Linear(nn.Module):
     def __init__(self, in_features, out_features, bias=True):
         super().__init__()

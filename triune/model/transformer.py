@@ -4,6 +4,7 @@ import torch.nn as nn
 from .block import *
 from .norms import *
 
+from .config import *
 class TriuneTransformer(nn.Module):
     def __init__(self, vocab_size=VOCAB_SIZE, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS, use_fp4=True):
         super().__init__()

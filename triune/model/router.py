@@ -6,6 +6,7 @@ from .rotary import *
 from .attention import *
 from .norms import *
 
+from .config import *
 class HybridAttention(nn.Module):
     def __init__(self, dim, heads, use_fp4=True):
         super().__init__()

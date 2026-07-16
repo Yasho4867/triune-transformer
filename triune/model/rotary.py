@@ -2,6 +2,9 @@ import math
 import torch
 import torch.nn as nn
 
+from .config import ROPE_MAX_SEQ_LEN
+
+from .config import *
 class RotaryEmbedding(nn.Module):
     def __init__(self, dim, max_seq_len=ROPE_MAX_SEQ_LEN):
         super().__init__()

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from .config import *
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-6):
         super().__init__()

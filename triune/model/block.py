@@ -5,6 +5,7 @@ from .router import *
 from .moe import *
 from .norms import *
 
+from .config import *
 class TransformerBlock(nn.Module):
     def __init__(self, dim, heads, layer_idx, vocab_size, exit_layers, use_moe=True, use_fp4=True):
         super().__init__()

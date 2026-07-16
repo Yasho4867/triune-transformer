@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .config import ROPE_MAX_SEQ_LEN
+
+from .config import *
 class VectorisedGLA(nn.Module):
     def __init__(self, dim, heads, head_dim=GLA_HEAD_DIM):
         super().__init__()

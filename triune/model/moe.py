@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from .fp4 import *
 from .norms import *
 
+from .config import *
 class MoE_FFN(nn.Module):
     def __init__(self, dim, num_experts=NUM_EXPERTS, top_k=TOP_K_EXPERTS, use_fp4=True, shared_expert=SHARED_EXPERT):
         super().__init__()
