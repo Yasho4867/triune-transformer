@@ -2,9 +2,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .config import ROPE_MAX_SEQ_LEN
-
 from .config import *
+from .rotary import *
+
+
+try:
+    from fla.ops.gla import chunk_gla
+    HAS_FLA = True
+except ImportError:
+    HAS_FLA = False
+    chunk_gla = None
+    raise ImportError("flash-linear-attention is required. Install with: pip install flash-linear-attention")
+
 class VectorisedGLA(nn.Module):
     def __init__(self, dim, heads, head_dim=GLA_HEAD_DIM):
         super().__init__()
