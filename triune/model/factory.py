@@ -1,4 +1,4 @@
-from model import TriuneTransformer
+from triune.model.transformer import TriuneTransformer
 
 def build_model(config):
     model = TriuneTransformer(

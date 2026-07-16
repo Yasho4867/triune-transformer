@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
 
-from config import *
-from model import MoE_FFN, FP4Linear
+from triune.configs.config import *
+from triune.model import MoE_FFN, FP4Linear
 
 try:
     from bitsandbytes.optim import AdamW8bit

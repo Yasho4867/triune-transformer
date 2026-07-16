@@ -4,7 +4,7 @@ import torch
 from torch.utils.data import DataLoader, IterableDataset
 from datasets import load_dataset, DownloadConfig
 
-from config import *
+from triune.configs.config import *
 
 class TokenStreamDataset(IterableDataset):
     def __init__(self, tokenizer, seq_len, max_tokens, sep_token_id,
