@@ -501,61 +501,8 @@ def next_batch():
         data_iter = iter(get_dataloader(is_holdout=False))
         return next(data_iter)
 
-@torch.no_grad()
-def run_eval(force_depth=None):
-    model.eval()
-    losses = []
-    for xb, yb in eval_batches:
-        xb, yb = xb.to(device), yb.to(device)
-        with autocast('cuda', dtype=torch.bfloat16):
-            logits, _ = model(xb, force_depth=force_depth)
-            loss = nn.CrossEntropyLoss(ignore_index=pad_token_id)(
-                logits.contiguous().view(-1, vocab_size),
-                yb.contiguous().view(-1)
-            )
-        losses.append(loss.item())
-    model.train()
-    return sum(losses) / len(losses)
 
-SAMPLE_PROMPT = "The history of"
-
-@torch.no_grad()
-def run_sample():
-    model.eval()
-    ids = torch.tensor(tokenizer.encode(SAMPLE_PROMPT).ids, dtype=torch.long, device=device).unsqueeze(0)
-    prompt_len = ids.size(1)
-    for _ in range(40):
-        with autocast('cuda', dtype=torch.bfloat16):
-            logits, _ = model(ids, force_depth=2)
-        nxt = logits[0, -1, :].argmax().item()
-        if nxt in (pad_token_id, sep_token_id):
-            break
-        ids = torch.cat([ids, torch.tensor([[nxt]], device=device)], dim=1)
-    model.train()
-    return tokenizer.decode(ids[0, prompt_len:].tolist())
-
-loss_fn = nn.CrossEntropyLoss(ignore_index=pad_token_id, reduction='none')
-router_loss_fn = nn.CrossEntropyLoss()
-
-model.train()
-step = start_step
-grad_accum = config["grad_accum_steps"]
-print(f"\n🚀 Training from step {step} to {config['total_steps']}")
-
-nvfp4_recipe = None
-if args.use_fp4:
-    # NVFP4 has its own two-level block-scaling scheme. Delayed FP8 amax
-    # settings do not apply to this recipe.
-    nvfp4_recipe = NVFP4BlockScaling(
-        fp4_format=Format.E2M1,
-        disable_stochastic_rounding = True,
-        disable_rht= True,
-
-
-        )
-    print("✅ NVFP4 recipe enabled")
-
-z_loss_coef = 0.001
+# moved to triune.trainer.evaluation
 
 def model_autocast():
     """Return the configured precision context for the training forward pass."""
