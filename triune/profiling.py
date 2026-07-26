@@ -1,16 +1,15 @@
-"""Profile a Triune training forward/backward pass on demand."""
+"""Bounded training-step profiling utilities."""
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import torch
 from torch.profiler import ProfilerActivity, profile
 
-from triune.configs import build_config
-from triune.data import load_tokenizer
-from triune.model import build_model
+from .configs import build_config
+from .data import load_tokenizer
+from .model import build_model
 
 
 def profile_model(
@@ -23,14 +22,14 @@ def profile_model(
     warmup_steps: int = 5,
     active_steps: int = 10,
 ) -> str:
-    """Run a bounded profile and return the generated profiler table."""
+    """Profile a bounded number of Cortex training steps and write the table."""
     if not torch.cuda.is_available():
         raise RuntimeError("GPU profiling requires CUDA")
     device = torch.device("cuda")
     tokenizer = load_tokenizer(tokenizer_path)
     config = build_config({"vocab_size": tokenizer.get_vocab_size(), "seq_len": seq_len})
-    checkpoint_path = Path(checkpoint_path)
     state_dict = None
+    checkpoint_path = Path(checkpoint_path)
     if checkpoint_path.is_file():
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
         state_dict = checkpoint["model_state"]
@@ -47,7 +46,6 @@ def profile_model(
     model = build_model(config).to(device).bfloat16().train()
     if state_dict is not None:
         model.load_state_dict(state_dict)
-
     loss_fn = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.token_to_id("[PAD]"))
 
     def training_step():
@@ -61,29 +59,9 @@ def profile_model(
 
     for _ in range(warmup_steps):
         training_step()
-    with profile(activities=[ProfilerActivity.CPU], record_shapes=True, with_stack=True) as prof:
+    with profile(activities=[ProfilerActivity.CPU], record_shapes=True, with_stack=True) as profiler:
         for _ in range(active_steps):
             training_step()
-    table = prof.key_averages().table(sort_by="cpu_time_total", row_limit=20)
+    table = profiler.key_averages().table(sort_by="cpu_time_total", row_limit=20)
     Path(output_path).write_text(table, encoding="utf-8")
     return table
-
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Profile Triune training steps")
-    parser.add_argument("--checkpoint", default="checkpoints_full/latest.pt")
-    parser.add_argument("--tokenizer_path", default="triune_tokenizer.json")
-    parser.add_argument("--output", default="profiler_output.txt")
-    parser.add_argument("--batch_size", type=int, default=4)
-    parser.add_argument("--seq_len", type=int, default=256)
-    parser.add_argument("--warmup_steps", type=int, default=5)
-    parser.add_argument("--active_steps", type=int, default=10)
-    args = parser.parse_args(argv)
-    print(profile_model(
-        checkpoint_path=args.checkpoint, tokenizer_path=args.tokenizer_path, output_path=args.output,
-        batch_size=args.batch_size, seq_len=args.seq_len, warmup_steps=args.warmup_steps, active_steps=args.active_steps,
-    ))
-
-
-if __name__ == "__main__":
-    main()

@@ -69,10 +69,10 @@ python scripts/train.py --resume_best --use_fp4
 
 ```bash
 python scripts/chat.py --checkpoint checkpoints_full/best.pt
-python build_tokenizer.py --output triune_tokenizer.json
-python gpucheck.py
-python debug_model.py
-python profiler.py --checkpoint checkpoints_full/latest.pt
+python scripts/tokenizer.py --output triune_tokenizer.json
+python scripts/gpucheck.py
+python scripts/debug.py
+python scripts/profile.py --checkpoint checkpoints_full/latest.pt
 python tests/test_framework.py
 ```
 

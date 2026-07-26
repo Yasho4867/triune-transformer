@@ -1,8 +1,13 @@
-"""Build the Triune tokenizer without starting work at module import."""
+"""Build a Triune tokenizer from the command line."""
 
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from triune.data import build_tokenizer
 
@@ -17,8 +22,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--dataset_config", default="wikitext-103-raw-v1")
     args = parser.parse_args(argv)
     tokenizer = build_tokenizer(
-        args.output, vocab_size=args.vocab_size, min_frequency=args.min_frequency, target_chars=args.target_chars,
-        dataset_name=args.dataset_name, dataset_config=args.dataset_config,
+        args.output, vocab_size=args.vocab_size, min_frequency=args.min_frequency,
+        target_chars=args.target_chars, dataset_name=args.dataset_name,
+        dataset_config=args.dataset_config,
     )
     print(f"Tokenizer saved to {args.output}; vocabulary size: {tokenizer.get_vocab_size():,}")
 
