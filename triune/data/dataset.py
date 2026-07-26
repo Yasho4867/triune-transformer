@@ -1,92 +1,105 @@
+"""Streaming token datasets with no module-level runtime state."""
+
+from __future__ import annotations
+
 import random
+from collections.abc import Iterator
 
 import torch
+from datasets import DownloadConfig, load_dataset
 from torch.utils.data import DataLoader, IterableDataset
-from datasets import load_dataset, DownloadConfig
 
-from triune.configs.config import *
 
 class TokenStreamDataset(IterableDataset):
-    def __init__(self, tokenizer, seq_len, max_tokens, sep_token_id,
-                 shuffle_buffer=SHUFFLE_BUFFER, is_holdout=False, offset=0):
+    def __init__(
+        self,
+        tokenizer,
+        *,
+        seq_len: int,
+        sep_token_id: int,
+        max_tokens: int | None = None,
+        shuffle_buffer: int = 4096,
+        offset: int = 0,
+        dataset_name: str = "HuggingFaceFW/fineweb-edu",
+        dataset_config: str | None = "sample-10BT",
+    ) -> None:
         self.tokenizer = tokenizer
         self.seq_len = seq_len
-        self.max_tokens = max_tokens
         self.sep_token_id = sep_token_id
+        self.max_tokens = max_tokens
         self.shuffle_buffer = shuffle_buffer
-        self.is_holdout = is_holdout
         self.offset = offset
+        self.dataset_name = dataset_name
+        self.dataset_config = dataset_config
 
-    def __iter__(self):
-        buffer = []
-        token_count = 0
-        dl_config = DownloadConfig(max_retries=10, resume_download=True)
-        hf_stream = load_dataset(
-            "HuggingFaceFW/fineweb-edu",
-            name="sample-10BT",
+    def _stream(self):
+        return load_dataset(
+            self.dataset_name,
+            name=self.dataset_config,
             split="train",
             streaming=True,
-            download_config=dl_config
+            download_config=DownloadConfig(max_retries=10, resume_download=True),
         )
-        skip_tokens = self.offset
-        if skip_tokens > 0:
-            for sample in hf_stream:
-                text = sample.get("text", "")
-                if not text.strip():
-                    continue
-                ids = self.tokenizer.encode(text).ids
-                if skip_tokens > len(ids):
-                    skip_tokens -= len(ids)
-                    continue
-                else:
-                    ids = ids[skip_tokens:]
-                    skip_tokens = 0
-                    buffer.extend(ids)
-                    break
 
-        chunk_buffer = []
-        for sample in hf_stream:
+    @staticmethod
+    def _flush(buffer: list[tuple[torch.Tensor, torch.Tensor]]) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+        random.shuffle(buffer)
+        yield from buffer
+        buffer.clear()
+
+    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
+        token_buffer: list[int] = []
+        batch_buffer: list[tuple[torch.Tensor, torch.Tensor]] = []
+        token_count = 0
+        stream = self._stream()
+
+        tokens_to_skip = self.offset
+        for sample in stream:
             text = sample.get("text", "")
             if not text.strip():
                 continue
             ids = self.tokenizer.encode(text).ids
-            buffer.extend(ids)
-            buffer.append(self.sep_token_id)
-            while len(buffer) >= self.seq_len + 1:
-                chunk = buffer[:self.seq_len + 1]
-                buffer = buffer[self.seq_len + 1:]
-                chunk_buffer.append((torch.tensor(chunk[:-1], dtype=torch.long),
-                                     torch.tensor(chunk[1:], dtype=torch.long)))
+            if tokens_to_skip:
+                if tokens_to_skip >= len(ids):
+                    tokens_to_skip -= len(ids)
+                    continue
+                ids = ids[tokens_to_skip:]
+                tokens_to_skip = 0
+            token_buffer.extend(ids)
+            token_buffer.append(self.sep_token_id)
+
+            while len(token_buffer) >= self.seq_len + 1:
+                chunk = token_buffer[: self.seq_len + 1]
+                del token_buffer[: self.seq_len + 1]
+                batch_buffer.append(
+                    (torch.tensor(chunk[:-1], dtype=torch.long), torch.tensor(chunk[1:], dtype=torch.long))
+                )
                 token_count += self.seq_len
-                if len(chunk_buffer) >= self.shuffle_buffer:
-                    random.shuffle(chunk_buffer)
-                    for x, y in chunk_buffer:
-                        yield x, y
-                    chunk_buffer.clear()
+
+                if len(batch_buffer) >= self.shuffle_buffer:
+                    yield from self._flush(batch_buffer)
                 if self.max_tokens is not None and token_count >= self.max_tokens:
-                    # Evaluation commonly stops before the shuffle buffer fills.
-                    # Flush its completed sequences instead of returning an empty
-                    # iterable to the DataLoader.
-                    random.shuffle(chunk_buffer)
-                    for x, y in chunk_buffer:
-                        yield x, y
+                    yield from self._flush(batch_buffer)
                     return
-        random.shuffle(chunk_buffer)
-        for x, y in chunk_buffer:
-            yield x, y
 
-def get_dataloader(is_holdout=False):
-    if is_holdout:
-        max_tokens = args.eval_batches * args.batch_size * args.seq_len
-        offset = 0
-    else:
-        max_tokens = None
-        offset = args.eval_batches * args.batch_size * args.seq_len
-    ds = TokenStreamDataset(tokenizer, seq_len=config["seq_len"],
-                            max_tokens=max_tokens,
-                            sep_token_id=sep_token_id,
-                            shuffle_buffer=SHUFFLE_BUFFER,
-                            is_holdout=is_holdout,
-                            offset=offset)
-    return DataLoader(ds, batch_size=config["batch_size"], num_workers=0, drop_last=True)
+        yield from self._flush(batch_buffer)
 
+
+def build_dataloader(tokenizer, config: dict, sep_token_id: int, *, is_holdout: bool) -> DataLoader:
+    eval_tokens = config["eval_batches"] * config["batch_size"] * config["seq_len"]
+    dataset = TokenStreamDataset(
+        tokenizer,
+        seq_len=config["seq_len"],
+        sep_token_id=sep_token_id,
+        max_tokens=eval_tokens if is_holdout else None,
+        offset=0 if is_holdout else eval_tokens,
+        shuffle_buffer=config["shuffle_buffer"],
+        dataset_name=config["dataset_name"],
+        dataset_config=config["dataset_config"],
+    )
+    return DataLoader(
+        dataset,
+        batch_size=config["batch_size"],
+        num_workers=config["num_workers"],
+        drop_last=True,
+    )

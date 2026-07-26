@@ -1,48 +1,27 @@
-from tokenizers import Tokenizer
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import ByteLevel
-from tokenizers.processors import ByteLevel as ByteLevelProcessor
-from datasets import load_dataset
-from tqdm import tqdm
+"""Build the Triune tokenizer without starting work at module import."""
 
-VOCAB_SIZE = 32_000
-MIN_FREQUENCY = 2
-SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
-TARGET_CHARS = 5_000_000_000
+from __future__ import annotations
 
-print(f"Building Triune tokenizer (vocab size: {VOCAB_SIZE})")
-dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
+import argparse
 
-tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
-tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=True)
-tokenizer.post_processor = ByteLevelProcessor(trim_offsets=True)
-trainer = BpeTrainer(
-    vocab_size=VOCAB_SIZE,
-    min_frequency=MIN_FREQUENCY,
-    special_tokens=SPECIAL_TOKENS,
-)
+from triune.data import build_tokenizer
 
-stats = {"chunks": 0, "chars": 0}
 
-def text_iterator():
-    """Yield documents directly to the trainer without retaining the corpus in RAM."""
-    for sample in tqdm(dataset, desc="Streaming text"):
-        text = sample.get("text", "")
-        if not text.strip():
-            continue
-        stats["chunks"] += 1
-        stats["chars"] += len(text)
-        yield text
-        if stats["chars"] >= TARGET_CHARS:
-            return
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Build a Triune BPE tokenizer")
+    parser.add_argument("--output", default="triune_tokenizer.json")
+    parser.add_argument("--vocab_size", type=int, default=32_000)
+    parser.add_argument("--min_frequency", type=int, default=2)
+    parser.add_argument("--target_chars", type=int, default=5_000_000_000)
+    parser.add_argument("--dataset_name", default="wikitext")
+    parser.add_argument("--dataset_config", default="wikitext-103-raw-v1")
+    args = parser.parse_args(argv)
+    tokenizer = build_tokenizer(
+        args.output, vocab_size=args.vocab_size, min_frequency=args.min_frequency, target_chars=args.target_chars,
+        dataset_name=args.dataset_name, dataset_config=args.dataset_config,
+    )
+    print(f"Tokenizer saved to {args.output}; vocabulary size: {tokenizer.get_vocab_size():,}")
 
-print("Training tokenizer...")
-tokenizer.train_from_iterator(text_iterator(), trainer=trainer)
-tokenizer.save("triune_tokenizer.json")
-print(f"Tokenizer saved after {stats['chunks']:,} chunks / {stats['chars']:,} characters")
 
-test_text = "The capital of France is Paris."
-encoded = tokenizer.encode(test_text)
-print(f"Test encoding: {encoded.tokens}")
-print(f"Vocab size: {tokenizer.get_vocab_size()}")
+if __name__ == "__main__":
+    main()

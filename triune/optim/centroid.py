@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 
-from triune.configs.config import *
+import config as defaults
 from triune.model import MoE_FFN, FP4Linear
 
 try:
@@ -13,9 +13,10 @@ except ImportError:
 
 class CentroidSteerOptimizer(torch.optim.Optimizer):
     def __init__(self, model, lr, betas, weight_decay,
-                 rank=GALORE_RANK, update_gap=GALORE_UPDATE_GAP,
+                 rank=defaults.GALORE_RANK, update_gap=defaults.GALORE_UPDATE_GAP,
                  steer_scale=0.1,
-                 expert_lr=GALORE_LR, expert_betas=GALORE_BETAS, expert_wd=GALORE_WEIGHT_DECAY):
+                 expert_lr=defaults.GALORE_LR, expert_betas=defaults.GALORE_BETAS,
+                 expert_wd=defaults.GALORE_WEIGHT_DECAY):
         defaults = dict(lr=lr, betas=betas, weight_decay=weight_decay)
         dummy_param = torch.nn.Parameter(torch.zeros(1))
         super().__init__([{'params': [dummy_param]}], defaults)
@@ -201,4 +202,3 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
             g['projection'] = sd['projection']
             g['proj_step'] = sd['proj_step']
             g['state'].update(sd['state'])
-

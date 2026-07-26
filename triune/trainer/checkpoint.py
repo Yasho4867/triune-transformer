@@ -1,43 +1,45 @@
-import os
+"""Checkpoint persistence and restoration for :class:`triune.Trainer`."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
 import torch
 
-def save_latest(step, loss):
-    torch.save({
+
+def _checkpoint_payload(trainer, engine, step: int, loss: float) -> dict:
+    return {
         "step": step,
-        "model_state": model.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
+        "model_state": trainer.model.state_dict(),
+        "optimizer_state": trainer.optimizer.state_dict(),
         "loss": loss,
-        "best_eval_loss": best_eval_loss,
-        "config": config,
-        "depth_usage_ema": depth_usage_ema,
-        "wandb_run_id": wandb.run.id if not args.no_wandb else None,
-    }, os.path.join(config["checkpoint_dir"], "latest.pt"))
+        "best_eval_loss": engine.best_eval_loss,
+        "config": trainer.config,
+        "depth_usage_ema": engine.depth_usage_ema,
+        "wandb_run_id": trainer.logger.run_id,
+    }
 
-def save_best(step, loss):
-    torch.save({
-        "step": step,
-        "model_state": model.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
-        "loss": loss,
-        "best_eval_loss": best_eval_loss,
-        "config": config,
-        "depth_usage_ema": depth_usage_ema,
-        "wandb_run_id": wandb.run.id if not args.no_wandb else None,
-    }, os.path.join(config["checkpoint_dir"], "best.pt"))
 
-# ─── Data loaders ──────────────────────────────────────────────
-eval_dataloader = get_dataloader(is_holdout=True)
-eval_iter = iter(eval_dataloader)
-eval_batches = []
-for _ in range(config["eval_batches"]):
-    try:
-        x, y = next(eval_iter)
-    except StopIteration:
-        print("⚠️ Eval stream exhausted, re-iterating")
-        eval_iter = iter(eval_dataloader)
-        x, y = next(eval_iter)
-    eval_batches.append((x, y))
+def save_latest(trainer, engine, step: int, loss: float) -> Path:
+    path = Path(trainer.config["checkpoint_dir"]) / "latest.pt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(_checkpoint_payload(trainer, engine, step, loss), path)
+    return path
 
-train_dataloader = get_dataloader(is_holdout=False)
-data_iter = iter(train_dataloader)
 
+def save_best(trainer, engine, step: int, loss: float) -> Path:
+    path = Path(trainer.config["checkpoint_dir"]) / "best.pt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(_checkpoint_payload(trainer, engine, step, loss), path)
+    return path
+
+
+def load_checkpoint(trainer, path: str | Path, *, load_optimizer: bool) -> dict:
+    checkpoint = torch.load(path, map_location=trainer.device, weights_only=False)
+    state_dict = checkpoint["model_state"]
+    if any(key.startswith("_orig_mod.") for key in state_dict):
+        state_dict = {key.removeprefix("_orig_mod."): value for key, value in state_dict.items()}
+    trainer.model.load_state_dict(state_dict)
+    if load_optimizer:
+        trainer.optimizer.load_state_dict(checkpoint["optimizer_state"])
+    return checkpoint

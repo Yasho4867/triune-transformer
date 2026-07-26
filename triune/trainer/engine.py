@@ -1,16 +1,23 @@
-"""
-Training engine extracted from the legacy trainer.
+"""Stateful execution engine for Triune training."""
 
-NOTE:
-This is intentionally copied verbatim first.
-The Trainer migration will happen afterwards.
-"""
+from __future__ import annotations
+
+import math
+import random
+
+import torch
+import torch.nn.functional as F
+
+from triune.model import MoE_FFN
+
 
 class TrainingEngine:
-
-    def __init__(self, trainer):
+    def __init__(self, trainer) -> None:
         self.trainer = trainer
-
+        self.step = 0
+        self.best_eval_loss = float("inf")
+        self.target_depth_dist = torch.tensor(trainer.config["target_depth_dist"], device=trainer.device)
+        self.depth_usage_ema = self.target_depth_dist.clone()
 
     @property
     def model(self):
@@ -24,166 +31,143 @@ class TrainingEngine:
     def config(self):
         return self.trainer.config
 
-    @property
-    def device(self):
-        return self.trainer.device
+    def _exploration_rate(self) -> float:
+        mode = self.config["exploration"]
+        steps = self.config["exploration_steps"]
+        if mode == "none" or steps <= 0:
+            return 0.0
+        if mode == "linear":
+            return max(0.0, 1.0 - self.step / steps)
+        if mode == "cosine" and self.step < steps:
+            return 0.5 * (1 + math.cos(math.pi * self.step / steps))
+        return 0.0
 
+    def _router_labels(self, x, y):
+        with torch.no_grad():
+            reflex, limbic, cortex, _ = self.model.forward_all_exits(x, update_stats=False)
+            y_flat = y.reshape(-1)
+            valid_mask = y_flat != self.trainer.pad_token_id
+            valid_per_sample = valid_mask.reshape(x.size(0), -1).sum(dim=1).clamp_min(1)
+            losses = []
+            for logits in (reflex, limbic, cortex):
+                token_loss = self.trainer.loss_fn(logits.reshape(-1, self.trainer.vocab_size), y_flat)
+                losses.append((token_loss * valid_mask.float()).reshape(x.size(0), -1).sum(dim=1) / valid_per_sample)
+            all_losses = torch.stack(losses, dim=1)
+            adjusted = all_losses - self.config["bias_strength"] * (self.target_depth_dist - self.depth_usage_ema).unsqueeze(0)
+            labels = adjusted.argmin(dim=1)
+            usage = F.one_hot(labels, num_classes=3).float().mean(dim=0)
+            self.depth_usage_ema.mul_(self.config["usage_ema_decay"]).add_(usage * (1 - self.config["usage_ema_decay"]))
+        return labels
+
+    def _log_training(self, *, loss, lm_loss, router_loss, balance_loss, lr, exploration_rate, overflow, labels, route_logits):
+        if self.step % self.config["log_every"]:
+            return
+        vram_gib = (
+            torch.cuda.memory_allocated(self.trainer.device) / 1024**3
+            if self.trainer.device.type == "cuda" else 0.0
+        )
+        depth_names = ("Reflex", "Limbic", "Cortex")
+        chosen = route_logits.argmax(dim=-1)[0].item()
+        target = labels[0].item()
+        usage = " ".join(f"{name[0]}:{value:.2f}" for name, value in zip(depth_names, self.depth_usage_ema))
+        print(
+            f"Step {self.step:6d}/{self.config['total_steps']} | Loss: {loss:.4f} "
+            f"(LM: {lm_loss:.4f}, Router: {router_loss:.4f}, Bal: {balance_loss:.4f}) "
+            f"| Router: {depth_names[chosen]} (target: {depth_names[target]}) "
+            f"| Usage: {usage} | LR: {lr:.2e} "
+            f"| VRAM: {vram_gib:.2f} GB "
+            f"| Best Eval: {self.best_eval_loss:.4f} | Overflow: {overflow}"
+        )
+        self.trainer.logger.log(
+            {
+                "train/loss": loss,
+                "train/lm_loss": lm_loss,
+                "train/router_loss": router_loss,
+                "train/balance_loss": balance_loss,
+                "train/lr": lr,
+                "usage/reflex": self.depth_usage_ema[0].item(),
+                "usage/limbic": self.depth_usage_ema[1].item(),
+                "usage/cortex": self.depth_usage_ema[2].item(),
+                "vram": vram_gib,
+                "best_eval_loss": self.best_eval_loss,
+                "exploration_rate": exploration_rate,
+                "overflow": overflow,
+            },
+            step=self.step,
+        )
 
     def train(self):
-
+        self.model.train()
         try:
-            while step < config["total_steps"]:
-                lr = lr_schedule(step)
-                set_optimizer_lr(lr)
-
-                # Sync global step to MoE layers
-                for module in model.modules():
+            while self.step < self.config["total_steps"]:
+                lr = self.trainer.lr_schedule(self.config, self.step)
+                self.trainer.set_optimizer_lr(self.optimizer, lr)
+                for module in self.model.modules():
                     if isinstance(module, MoE_FFN):
-                        module._global_step = step
+                        module._global_step = self.step
 
-                optimizer.zero_grad()
-                acc_loss = 0.0
-                acc_lm = 0.0
-                acc_router = 0.0
-                acc_balance = 0.0
-                acc_overflow = 0
-                last_route = None
+                self.optimizer.zero_grad()
+                totals = {"loss": 0.0, "lm": 0.0, "router": 0.0, "balance": 0.0, "overflow": 0}
+                last_labels = last_route_logits = None
+                exploration_rate = self._exploration_rate()
 
-                for micro in range(grad_accum):
-                    x, y = next_batch()
-                    x, y = x.to(device), y.to(device)
+                for _ in range(self.trainer.grad_accum):
+                    x, y = self.trainer.next_batch()
+                    x, y = x.to(self.trainer.device), y.to(self.trainer.device)
+                    labels = self._router_labels(x, y)
+                    chosen_depth = random.choice((0, 1, 2)) if random.random() < exploration_rate else None
 
-                    # ─── Router labels per sample ─────────────────────
-                    with torch.no_grad():
-                        # Ensure MoE layers don't update stats during label generation
-                        reflex, limbic, cortex, _ = model.forward_all_exits(x, update_stats=False)
-                        y_flat = y.contiguous().view(-1)
-                        loss_reflex = loss_fn(reflex.contiguous().view(-1, vocab_size), y_flat)
-                        loss_limbic = loss_fn(limbic.contiguous().view(-1, vocab_size), y_flat)
-                        loss_cortex = loss_fn(cortex.contiguous().view(-1, vocab_size), y_flat)
-                        valid_mask = (y_flat != pad_token_id)
-                        valid_per_sample = valid_mask.view(x.shape[0], -1).sum(dim=1).clamp_min(1)
-                        loss_reflex = (loss_reflex * valid_mask.float()).view(x.shape[0], -1).sum(dim=1) / valid_per_sample
-                        loss_limbic = (loss_limbic * valid_mask.float()).view(x.shape[0], -1).sum(dim=1) / valid_per_sample
-                        loss_cortex = (loss_cortex * valid_mask.float()).view(x.shape[0], -1).sum(dim=1) / valid_per_sample
-                        losses = torch.stack([loss_reflex, loss_limbic, loss_cortex], dim=1)
-                        usage_gap = target_depth_dist - depth_usage_ema
-                        adjusted = losses - config["bias_strength"] * usage_gap.unsqueeze(0)
-                        best_depth = adjusted.argmin(dim=1)
-                        depth_labels = best_depth
-                        one_hot = F.one_hot(best_depth, num_classes=3).float().mean(dim=0)
-                        depth_usage_ema.mul_(config["usage_ema_decay"]).add_(one_hot * (1 - config["usage_ema_decay"]))
-
-                    # Exploration
-                    expl_type = config["exploration"]
-                    expl_steps = config["exploration_steps"]
-                    if expl_type == "none":
-                        exploration_rate = 0.0
-                    elif expl_type == "linear":
-                        exploration_rate = max(0.0, 1.0 - step / expl_steps)
-                    elif expl_type == "cosine":
-                        if step < expl_steps:
-                            exploration_rate = 0.5 * (1 + math.cos(math.pi * step / expl_steps))
-                        else:
-                            exploration_rate = 0.0
-                    else:
-                        exploration_rate = 0.0
-
-                    if random.random() < exploration_rate:
-                        chosen_depth = random.choice([0, 1, 2])
-                    else:
-                        chosen_depth = None
-
-                    # ─── Forward pass ──────────────────────────────────
-                    with model_autocast():
-                        logits, route_logits = model(x, force_depth=chosen_depth)
-
-                    y_flat = y.contiguous().view(-1)
-                    lm_loss = loss_fn(logits.contiguous().view(-1, vocab_size), y_flat).mean()
-
-                    rloss = router_loss_fn(route_logits, depth_labels)
+                    with self.trainer.model_autocast():
+                        logits, route_logits = self.model(x, force_depth=chosen_depth)
+                    y_flat = y.reshape(-1)
+                    lm_loss = self.trainer.loss_fn(logits.reshape(-1, self.trainer.vocab_size), y_flat).mean()
+                    router_loss = self.trainer.router_loss_fn(route_logits, labels)
                     z_loss = torch.logsumexp(route_logits, dim=-1).pow(2).mean()
-                    probs = torch.softmax(route_logits, dim=-1)
-                    mean_prob = probs.mean(dim=0)
-                    balance_loss = (mean_prob - target_depth_dist).pow(2).mean()
+                    balance_loss = (torch.softmax(route_logits, dim=-1).mean(dim=0) - self.target_depth_dist).pow(2).mean()
+                    micro_loss = lm_loss + 0.5 * router_loss + self.trainer.z_loss_coef * z_loss + self.config["balance_coef"] * balance_loss
+                    (micro_loss / self.trainer.grad_accum).backward()
 
-                    micro_loss = lm_loss + 0.5 * rloss + z_loss_coef * z_loss + config["balance_coef"] * balance_loss
-                    acc_router += rloss.item()
-                    acc_balance += balance_loss.item()
-
-                    (micro_loss / grad_accum).backward()
-                    acc_loss += micro_loss.item()
-                    acc_lm += lm_loss.item()
-                    last_route = route_logits
-
-                    # Accumulate overflow
-                    for module in model.modules():
+                    totals["loss"] += micro_loss.item()
+                    totals["lm"] += lm_loss.item()
+                    totals["router"] += router_loss.item()
+                    totals["balance"] += balance_loss.item()
+                    for module in self.model.modules():
                         if isinstance(module, MoE_FFN):
-                            acc_overflow += module.overflow_counter
+                            totals["overflow"] += module.overflow_counter
                             module.overflow_counter = 0
+                    last_labels, last_route_logits = labels, route_logits
 
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["grad_clip"])
+                self.optimizer.step()
+                for key in ("loss", "lm", "router", "balance"):
+                    totals[key] /= self.trainer.grad_accum
 
-                loss_val = acc_loss / grad_accum
-                lm_val = acc_lm / grad_accum
-                router_val = acc_router / grad_accum
-                balance_val = acc_balance / grad_accum
+                if self.step and self.step % self.config["eval_every"] == 0:
+                    cortex_loss = self.trainer.run_eval(force_depth=2)
+                    dynamic_loss = self.trainer.run_eval()
+                    if cortex_loss < self.best_eval_loss:
+                        self.best_eval_loss = cortex_loss
+                        self.trainer.save_best(self.step, cortex_loss)
+                    sample = self.trainer.run_sample()
+                    print(f"Eval cortex: {cortex_loss:.4f} | dynamic: {dynamic_loss:.4f} | perplexity: {math.exp(min(cortex_loss, 20)):.2f}")
+                    print(f"Sample: {self.trainer.sample_prompt}{sample}\n")
+                    self.trainer.logger.log(
+                        {"eval/loss": cortex_loss, "eval/dynamic_loss": dynamic_loss, "eval/perplexity": math.exp(min(cortex_loss, 20))},
+                        step=self.step,
+                    )
 
-                if step % config["eval_every"] == 0 and step > 0:
-                    eval_loss = run_eval(force_depth=2)       # Cortex
-                    dynamic_eval_loss = run_eval(force_depth=None)  # Router's own choice
-                    if eval_loss < best_eval_loss:
-                        best_eval_loss = eval_loss
-                        save_best(step, eval_loss)
-                    sample = run_sample()
-                    print(f"   📊 Eval (Cortex): {eval_loss:.4f} | Dynamic: {dynamic_eval_loss:.4f} | Perplexity: {math.exp(min(eval_loss,20)):.2f}")
-                    print(f"   📝 Sample: {SAMPLE_PROMPT}{sample}\n")
-                    if not args.no_wandb:
-                        wandb.log({
-                            "eval/loss": eval_loss,
-                            "eval/dynamic_loss": dynamic_eval_loss,
-                            "eval/perplexity": math.exp(min(eval_loss, 20)),
-                            "best_eval_loss": best_eval_loss,
-                        }, step=step)
-
-                if step % config["save_every"] == 0 and step > 0:
-                    save_latest(step, loss_val)
-
-                if step % config["log_every"] == 0:
-                    depth_map = {0: "Reflex", 1: "Limbic", 2: "Cortex"}
-                    chosen = last_route.argmax(dim=-1)[0].item()
-                    label = depth_labels[0].item()
-                    usage_str = f"R:{depth_usage_ema[0]:.2f} L:{depth_usage_ema[1]:.2f} C:{depth_usage_ema[2]:.2f}"
-                    print(f"Step {step:6d}/{config['total_steps']} | Loss: {loss_val:.4f} (LM: {lm_val:.4f}, Router: {router_val:.4f}, Bal: {balance_val:.4f}) "
-                          f"| Router: {depth_map[chosen]} (target: {depth_map[label]}) "
-                          f"| Usage: {usage_str} | LR: {lr:.2e} | VRAM: {torch.cuda.memory_allocated(device)/1024**3:.2f} GB | Best Eval: {best_eval_loss:.4f} | Overflow: {acc_overflow}")
-
-                if not args.no_wandb and step % config["log_every"] == 0:
-                    wandb.log({
-                        "train/loss": loss_val,
-                        "train/lm_loss": lm_val,
-                        "train/router_loss": router_val,
-                        "train/balance_loss": balance_val,
-                        "train/lr": lr,
-                        "usage/reflex": depth_usage_ema[0].item(),
-                        "usage/limbic": depth_usage_ema[1].item(),
-                        "usage/cortex": depth_usage_ema[2].item(),
-                        "vram": torch.cuda.memory_allocated(device)/1024**3,
-                        "best_eval_loss": best_eval_loss,
-                        "exploration_rate": exploration_rate,
-                        "overflow": acc_overflow,
-                    }, step=step)
-
-                step += 1
-
-        except KeyboardInterrupt:
-            print("\n⚠️ KeyboardInterrupt – saving checkpoint...")
-            save_latest(step, 0.0)
-            sys.exit(0)
-        except Exception as e:
-            print(f"\n❌ Unhandled exception: {e}")
-            save_latest(step, 0.0)
+                if self.step and self.step % self.config["save_every"] == 0:
+                    self.trainer.save_latest(self.step, totals["loss"])
+                self._log_training(
+                    loss=totals["loss"], lm_loss=totals["lm"], router_loss=totals["router"],
+                    balance_loss=totals["balance"], lr=lr, exploration_rate=exploration_rate,
+                    overflow=totals["overflow"], labels=last_labels, route_logits=last_route_logits,
+                )
+                self.step += 1
+        except BaseException:
+            self.trainer.save_latest(self.step, 0.0)
             raise
 
-        save_latest(step-1, 0.0)
+        if self.step:
+            self.trainer.save_latest(self.step - 1, 0.0)
+        return {"step": self.step, "best_eval_loss": self.best_eval_loss}

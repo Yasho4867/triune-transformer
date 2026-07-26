@@ -1,43 +1,30 @@
+"""Optimizer construction without module-level training state."""
+
+from __future__ import annotations
+
 import torch
 
-from .centroid import *
+import config as defaults
 
-def build_optimizer(model, config):
-    """
-    Construct the optimizer for a model.
+from .centroid import AdamW8bit, CentroidSteerOptimizer, HAS_8BIT
 
-    Parameters
-    ----------
-    model : torch.nn.Module
-    config : dict
-    """
 
-    if GALORE:
+def build_optimizer(model, config: dict):
+    """Build the configured optimizer while preserving the centroid/GaLore path."""
+    if defaults.GALORE:
         print("✅ CentroidSteerOptimizer active")
         return CentroidSteerOptimizer(
             model,
             lr=config["lr"],
             betas=config["betas"],
             weight_decay=config["weight_decay"],
-            rank=GALORE_RANK,
-            update_gap=GALORE_UPDATE_GAP,
+            rank=defaults.GALORE_RANK,
+            update_gap=defaults.GALORE_UPDATE_GAP,
             steer_scale=config["steer_scale"],
-            expert_lr=GALORE_LR,
-            expert_betas=GALORE_BETAS,
-            expert_wd=GALORE_WEIGHT_DECAY,
+            expert_lr=defaults.GALORE_LR,
+            expert_betas=defaults.GALORE_BETAS,
+            expert_wd=defaults.GALORE_WEIGHT_DECAY,
         )
-
     if HAS_8BIT and AdamW8bit is not None:
-        return AdamW8bit(
-            model.parameters(),
-            lr=config["lr"],
-            betas=config["betas"],
-            weight_decay=config["weight_decay"],
-        )
-
-    return torch.optim.AdamW(
-        model.parameters(),
-        lr=config["lr"],
-        betas=config["betas"],
-        weight_decay=config["weight_decay"],
-    )
+        return AdamW8bit(model.parameters(), lr=config["lr"], betas=config["betas"], weight_decay=config["weight_decay"])
+    return torch.optim.AdamW(model.parameters(), lr=config["lr"], betas=config["betas"], weight_decay=config["weight_decay"])

@@ -1,11 +1,16 @@
-import torch
+"""Data-loader iteration utilities."""
 
-def next_batch():
-    global data_iter
-    try:
-        return next(data_iter)
-    except StopIteration:
-        print("⚠️ Training stream exhausted – restarting")
-        data_iter = iter(get_dataloader(is_holdout=False))
-        return next(data_iter)
+from __future__ import annotations
 
+
+class CyclingDataLoader:
+    def __init__(self, loader) -> None:
+        self.loader = loader
+        self._iterator = iter(loader)
+
+    def next(self):
+        try:
+            return next(self._iterator)
+        except StopIteration:
+            self._iterator = iter(self.loader)
+            return next(self._iterator)

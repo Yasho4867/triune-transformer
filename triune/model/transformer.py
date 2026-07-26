@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from .block import *
+from .fp4 import te
 from .norms import *
 
 from .config import *

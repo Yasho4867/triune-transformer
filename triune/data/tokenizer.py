@@ -1,48 +1,51 @@
+"""Tokenizer loading and optional tokenizer training helpers."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from datasets import load_dataset
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.processors import ByteLevel as ByteLevelProcessor
-from datasets import load_dataset
-from tqdm import tqdm
+from tokenizers.trainers import BpeTrainer
 
-VOCAB_SIZE = 32_000
-MIN_FREQUENCY = 2
 SPECIAL_TOKENS = ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"]
-TARGET_CHARS = 5_000_000_000
 
-print(f"Building Triune tokenizer (vocab size: {VOCAB_SIZE})")
-dataset = load_dataset("wikitext", "wikitext-103-raw-v1", split="train", streaming=True)
 
-tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
-tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=True)
-tokenizer.post_processor = ByteLevelProcessor(trim_offsets=True)
-trainer = BpeTrainer(
-    vocab_size=VOCAB_SIZE,
-    min_frequency=MIN_FREQUENCY,
-    special_tokens=SPECIAL_TOKENS,
-)
+def load_tokenizer(path: str | Path) -> Tokenizer:
+    return Tokenizer.from_file(str(path))
 
-stats = {"chunks": 0, "chars": 0}
 
-def text_iterator():
-    """Yield documents directly to the trainer without retaining the corpus in RAM."""
-    for sample in tqdm(dataset, desc="Streaming text"):
-        text = sample.get("text", "")
-        if not text.strip():
-            continue
-        stats["chunks"] += 1
-        stats["chars"] += len(text)
-        yield text
-        if stats["chars"] >= TARGET_CHARS:
-            return
+def build_tokenizer(
+    output_path: str | Path,
+    *,
+    vocab_size: int = 32_000,
+    min_frequency: int = 2,
+    target_chars: int = 5_000_000_000,
+    dataset_name: str = "wikitext",
+    dataset_config: str | None = "wikitext-103-raw-v1",
+) -> Tokenizer:
+    """Train and save a BPE tokenizer directly from a dataset stream."""
+    dataset = load_dataset(dataset_name, dataset_config, split="train", streaming=True)
+    tokenizer = Tokenizer(BPE(unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=True)
+    tokenizer.post_processor = ByteLevelProcessor(trim_offsets=True)
+    trainer = BpeTrainer(vocab_size=vocab_size, min_frequency=min_frequency, special_tokens=SPECIAL_TOKENS)
+    seen = 0
 
-print("Training tokenizer...")
-tokenizer.train_from_iterator(text_iterator(), trainer=trainer)
-tokenizer.save("triune_tokenizer.json")
-print(f"Tokenizer saved after {stats['chunks']:,} chunks / {stats['chars']:,} characters")
+    def texts():
+        nonlocal seen
+        for sample in dataset:
+            text = sample.get("text", "")
+            if not text.strip():
+                continue
+            seen += len(text)
+            yield text
+            if seen >= target_chars:
+                return
 
-test_text = "The capital of France is Paris."
-encoded = tokenizer.encode(test_text)
-print(f"Test encoding: {encoded.tokens}")
-print(f"Vocab size: {tokenizer.get_vocab_size()}")
+    tokenizer.train_from_iterator(texts(), trainer=trainer)
+    tokenizer.save(str(output_path))
+    return tokenizer

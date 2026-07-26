@@ -1,10 +1,12 @@
-# Refactor roadmap
+# Refactor status
 
-1. Move configuration
-2. Move tokenizer
-3. Move datasets
-4. Move optimizer
-5. Move trainer
-6. Move model
-7. Replace train_llm.py with thin CLI
-8. Remove legacy code
+The callable-framework migration is complete.
+
+- Runtime configuration is isolated from research defaults.
+- Data, tokenizer, optimizer, precision, checkpoint, evaluation, and training
+  execution are reusable modules.
+- CLI scripts are thin entry points and are safe to import.
+- Legacy scripts, empty placeholders, stale profiling output, and unrelated
+  configuration artifacts were removed.
+
+Operational documentation lives in [FRAMEWORK.md](FRAMEWORK.md).
