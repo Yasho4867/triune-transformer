@@ -72,7 +72,7 @@ python scripts/chat.py --checkpoint checkpoints_full/best.pt
 python scripts/tokenizer.py --output triune_tokenizer.json
 python scripts/gpucheck.py
 python scripts/debug.py
-python scripts/profile.py --checkpoint checkpoints_full/latest.pt
+python scripts/profile_model.py --checkpoint checkpoints_full/latest.pt
 python tests/test_framework.py
 ```
 
