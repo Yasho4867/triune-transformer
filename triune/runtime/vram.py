@@ -33,6 +33,9 @@ class VRAMProfiler:
             "reserved_gb": round(reserved, 3),
             "max_allocated_gb": round(max_allocated, 3),
             "total_gb": round(total, 3),
+            "allocated": round(allocated, 3),
+            "reserved": round(reserved, 3),
+            "total": round(total, 3),
             "oom_risk": oom_risk,
         }
 

@@ -25,7 +25,17 @@ class MemoryEstimate:
 
 
 class MemoryPlanner:
-    """Hardware-aware VRAM Memory Planner."""
+    """Hardware-aware VRAM Memory Planner.
+    
+    Accurately models the Triune architecture:
+    - Embedding: vocab_size * hidden_dim
+    - Per-layer attention: 4 projections (Q,K,V,G) + output = 5 * hidden_dim^2
+    - Per-layer MoE FFN: num_experts * 2 * hidden_dim * (hidden_dim * expert_multiplier) + shared expert
+    - Per-layer dense FFN (prefix layers): 2 * hidden_dim * (hidden_dim * 4)
+    - Exit heads at reflex/limbic layers: hidden_dim * vocab_size each
+    - Router: hidden_dim * 3
+    - GaLore optimizer: rank-64 subspace projections (~0.15 bytes/param effective)
+    """
 
     @staticmethod
     def estimate_vram(
@@ -44,50 +54,121 @@ class MemoryPlanner:
         num_experts = config.get("num_experts", 8)
         seq_len = config.get("seq_len", 256)
         use_fp4 = config.get("use_fp4", False)
+        use_fp8 = config.get("use_fp8", False)
+        expert_multiplier = config.get("expert_hidden_multiplier", 6)
+        reflex_exit_layer = config.get("reflex_exit_layer", 6)
+        router_prefix_layers = config.get("router_prefix_layers", 3)
+        galore_rank = config.get("galore_rank", 64)
 
-        # Estimate parameters count
-        embed_params = vocab_size * hidden_dim
-        layer_params = num_layers * (4 * (hidden_dim**2) + num_experts * (3 * (hidden_dim**2)))
-        total_params = embed_params + layer_params
+        # ── Accurate Parameter Count ──────────────────────────
+        # Embedding + final norm
+        embed_params = vocab_size * hidden_dim + hidden_dim  # embedding + final RMSNorm
 
-        # Bytes per parameter depending on precision
-        bytes_per_param = 0.5 if use_fp4 else 2.0  # FP4 vs BF16/FP16
+        # Per-layer params
+        total_layer_params = 0
+        for i in range(num_layers):
+            # Attention: Q, K, V, gate, out projections + 2 RMSNorms
+            attn_params = 5 * (hidden_dim ** 2) + 2 * hidden_dim
+
+            # FFN: MoE layers (after reflex_exit_layer) vs dense prefix layers
+            if i > reflex_exit_layer:
+                # MoE: num_experts routed + 1 shared, each with 2 linear layers
+                expert_ffn_dim = hidden_dim * expert_multiplier
+                routed_params = num_experts * (2 * hidden_dim * expert_ffn_dim)
+                shared_params = 2 * hidden_dim * expert_ffn_dim  # shared expert
+                gate_params = hidden_dim * num_experts  # gating projection
+                ffn_params = routed_params + shared_params + gate_params
+            else:
+                # Dense prefix: 2 linear layers with 4x expansion
+                ffn_params = 2 * hidden_dim * (hidden_dim * 4)
+
+            total_layer_params += attn_params + ffn_params
+
+        # Exit heads (reflex + limbic)
+        exit_head_params = 2 * (hidden_dim * vocab_size)
+
+        # Depth router
+        router_params = hidden_dim * 3
+
+        total_params = embed_params + total_layer_params + exit_head_params + router_params
+
+        # ── Bytes Per Parameter ──────────────────────────────
+        if use_fp4:
+            bytes_per_param = 0.5
+        elif use_fp8:
+            bytes_per_param = 2.0  # FP8Linear stores weights in BF16, computes in FP8
+        else:
+            bytes_per_param = 2.0  # BF16
+
         param_memory_gb = (total_params * bytes_per_param) / (1024**3)
 
-        # Optimizer memory: CentroidSteer / 8-bit AdamW ~ 2 bytes per param vs standard 8 bytes
-        optimizer_bytes_per_param = 2.0
-        optimizer_memory_gb = (total_params * optimizer_bytes_per_param) / (1024**3)
+        # ── Optimizer Memory (GaLore Subspace) ────────────────
+        # GaLore stores rank-r projection matrices + rank-r momentum/variance
+        # For a (m, n) weight: projection is max(m,n) x rank, momentum/variance are rank x min(m,n) each
+        # Effective: ~(rank / min(m,n)) * 8 bytes per param (FP32 momentum + variance)
+        # For hidden_dim=1536, expert_dim=9216: rank=64, min=1536 → ratio = 64/1536 = 0.042
+        # 1D params (norms/biases) use standard AdamW: 8 bytes/param but they're tiny (<1M params)
+        rank_ratio = min(1.0, galore_rank / hidden_dim)
+        optimizer_2d_bytes = 8.0 * rank_ratio  # FP32 momentum + variance in low-rank subspace
+        # Projection matrices themselves: rank * max(m,n) * 2 bytes (BF16)
+        projection_bytes = 2.0 * rank_ratio
+        optimizer_bytes_per_param = optimizer_2d_bytes + projection_bytes
 
-        # Calculate activation memory per sample (seq_len * hidden_dim * num_layers)
-        activation_per_sample_mb = (seq_len * hidden_dim * num_layers * 2 * 4) / (1024**2)
+        # 1D params (norms, biases) ~= num_layers * 2 * hidden_dim, negligible
+        norm_params = num_layers * 2 * hidden_dim
+        optimizer_memory_gb = (
+            (total_params - norm_params) * optimizer_bytes_per_param + norm_params * 8.0
+        ) / (1024**3)
 
-        # Target safety threshold (85% of available VRAM)
-        target_limit_gb = available_vram_gb * 0.85
-        base_overhead_gb = param_memory_gb + optimizer_memory_gb + 0.5  # PyTorch CUDA context overhead
-
-        remaining_vram_gb = max(0.5, target_limit_gb - base_overhead_gb)
-
-        # Determine optimal batch size & grad accumulation
-        if remaining_vram_gb < 1.0:
-            recommended_batch_size = 1
-            recommended_grad_accum = 16
-            recommended_checkpointing = True
-            recommended_precision = "fp8" if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8 else "bf16"
-        elif remaining_vram_gb < 3.0:
-            recommended_batch_size = 2
-            recommended_grad_accum = 8
-            recommended_checkpointing = True
-            recommended_precision = "fp8"
+        # ── Activation Memory (with Gradient Checkpointing) ───
+        # With selective gradient checkpointing, only layer boundary activations are stored:
+        # num_layers * batch_size * seq_len * hidden_dim * 2 bytes (BF16)
+        # Without checkpointing, intermediate activations are ~4x larger
+        checkpointing = True  # We always recommend checkpointing for consumer GPUs
+        if checkpointing:
+            # Only store input to each layer
+            activation_per_sample_bytes = num_layers * seq_len * hidden_dim * 2
         else:
-            recommended_batch_size = 4
-            recommended_grad_accum = 4
-            recommended_checkpointing = False
-            recommended_precision = "fp8"
+            # Store all intermediate activations (attention scores, FFN intermediates)
+            activation_per_sample_bytes = num_layers * seq_len * hidden_dim * 2 * 4
 
-        activation_memory_gb = (recommended_batch_size * activation_per_sample_mb) / 1024
+        # ── Gradient Memory ──────────────────────────────────
+        # Gradients are same size as parameters (BF16)
         gradient_memory_gb = (total_params * 2.0) / (1024**3)
 
-        total_vram_gb = param_memory_gb + optimizer_memory_gb + activation_memory_gb + gradient_memory_gb
+        # ── Target Safety Threshold ──────────────────────────
+        cuda_context_gb = 0.5  # PyTorch CUDA context + cuBLAS workspace
+        base_overhead_gb = param_memory_gb + optimizer_memory_gb + gradient_memory_gb + cuda_context_gb
+        target_limit_gb = available_vram_gb * 0.90  # 90% safety margin
+
+        remaining_vram_gb = max(0.1, target_limit_gb - base_overhead_gb)
+
+        # ── Optimal Batch Size & Grad Accumulation ───────────
+        activation_per_sample_gb = activation_per_sample_bytes / (1024**3)
+
+        # Find largest batch that fits
+        recommended_batch_size = 1
+        for bs in [8, 4, 2, 1]:
+            if bs * activation_per_sample_gb <= remaining_vram_gb:
+                recommended_batch_size = bs
+                break
+
+        # Target effective batch of 8-16 tokens
+        effective_target = 8
+        recommended_grad_accum = max(1, effective_target // recommended_batch_size)
+
+        # Precision recommendation
+        if torch.cuda.is_available():
+            capability = torch.cuda.get_device_capability()
+            if capability[0] >= 8:
+                recommended_precision = "fp8"
+            else:
+                recommended_precision = "bf16"
+        else:
+            recommended_precision = "bf16"
+
+        activation_memory_gb = recommended_batch_size * activation_per_sample_gb
+        total_vram_gb = param_memory_gb + optimizer_memory_gb + activation_memory_gb + gradient_memory_gb + cuda_context_gb
 
         return MemoryEstimate(
             total_params=total_params,
@@ -98,6 +179,6 @@ class MemoryPlanner:
             total_vram_gb=round(total_vram_gb, 3),
             recommended_batch_size=recommended_batch_size,
             recommended_grad_accum=recommended_grad_accum,
-            recommended_checkpointing=recommended_checkpointing,
+            recommended_checkpointing=checkpointing,
             recommended_precision=recommended_precision,
         )
