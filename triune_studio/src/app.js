@@ -216,7 +216,14 @@
 
           const resVram = await apiFetch('/v1/vram/stats');
           const dataVram = await resVram.json();
-          if (dataVram.total_gb !== undefined) setVramUsage(dataVram);
+          if (dataVram.total_gb !== undefined || dataVram.total !== undefined) {
+            setVramUsage({
+              allocated: dataVram.allocated ?? dataVram.allocated_gb ?? 0.0,
+              reserved: dataVram.reserved ?? dataVram.reserved_gb ?? 0.0,
+              total: dataVram.total ?? dataVram.total_gb ?? 8.0,
+              oom_risk: Boolean(dataVram.oom_risk)
+            });
+          }
 
           const statusRes = await apiFetch('/v1/training/status');
           const statusData = await statusRes.json();

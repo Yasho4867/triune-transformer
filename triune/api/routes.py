@@ -276,8 +276,46 @@ if HAS_FASTAPI:
     async def get_vram_stats() -> Dict[str, Any]:
         """Return live VRAM profiling stats and OOM warning status."""
         stats = VRAMProfiler.get_vram_stats()
+        stats["allocated"] = stats["allocated_gb"]
+        stats["reserved"] = stats["reserved_gb"]
+        stats["total"] = stats["total_gb"]
         stats["oom_risk"] = VRAMProfiler.check_oom_risk(0.90)
         return stats
+
+    @router.post("/v1/vram/offload")
+    @router.post("/v1/vram/purge")
+    async def purge_vram() -> Dict[str, Any]:
+        """Purge GPU VRAM cache, collect garbage, and reset memory stats."""
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+            torch.cuda.reset_peak_memory_stats()
+        stats = VRAMProfiler.get_vram_stats()
+        stats["allocated"] = stats["allocated_gb"]
+        stats["reserved"] = stats["reserved_gb"]
+        stats["total"] = stats["total_gb"]
+        return {"status": "purged", "stats": stats}
+
+    @router.post("/v1/resource/plan")
+    async def plan_resource_budget(config: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Estimate VRAM allocation breakdown and recommend training hyperparameters."""
+        from triune.runtime.memory_planner import MemoryPlanner
+        cfg = config or {}
+        estimate = MemoryPlanner.estimate_vram(cfg)
+        return {
+            "total_params": estimate.total_params,
+            "param_memory_gb": estimate.param_memory_gb,
+            "optimizer_memory_gb": estimate.optimizer_memory_gb,
+            "activation_memory_gb": estimate.activation_memory_gb,
+            "gradient_memory_gb": estimate.gradient_memory_gb,
+            "total_vram_gb": estimate.total_vram_gb,
+            "recommended_batch_size": estimate.recommended_batch_size,
+            "recommended_grad_accum": estimate.recommended_grad_accum,
+            "recommended_checkpointing": estimate.recommended_checkpointing,
+            "recommended_precision": estimate.recommended_precision,
+        }
 
     @router.get("/v1/training/status")
     async def get_training_status() -> Dict[str, Any]:
