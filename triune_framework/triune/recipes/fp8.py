@@ -32,9 +32,5 @@ def build_fp8_precision_context(*, device, use_te: bool = True) -> callable:
         except (ImportError, Exception):
             pass
 
-    # PyTorch Native FP8 Fallback
-    if hasattr(torch, "float8_e4m3fn"):
-        return lambda: torch.amp.autocast("cuda", dtype=torch.float8_e4m3fn)
-
-    # Standard BF16 fallback if FP8 hardware features aren't bound
-    return lambda: bf16_autocast("cuda")
+    # For native PyTorch without TransformerEngine scaled GEMMs, use hardware BF16 autocast
+    return lambda: torch.amp.autocast("cuda", dtype=torch.bfloat16)
