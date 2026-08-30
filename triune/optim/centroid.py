@@ -139,22 +139,22 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
             if grad.abs().sum() == 0:
                 continue
             m, n = grad.shape
-            grad_fp32 = grad.float()
-
             if (self.step_count - group['proj_step']) >= self.update_gap or group['projection'] is None:
-                U, S, V = torch.svd_lowrank(grad_fp32, q=min(self.rank + 10, m, n), niter=4)
+                grad_fp32 = grad.float()
+                U, S, V = torch.svd_lowrank(grad_fp32, q=min(self.rank + 10, m, n), niter=2)
                 rank = min(self.rank, m, n)
                 
                 # Determine projection side based on matrix shape to minimize memory footprint
                 if m >= n:
                     # Left Projection: P (m x rank)
                     group['projection_side'] = 'left'
-                    group['projection'] = U[:, :rank].to(grad.dtype) # Strictly orthogonal (no S scaling)
+                    group['projection'] = U[:, :rank].to(grad.dtype).contiguous()
                 else:
                     # Right Projection: Q (n x rank)
                     group['projection_side'] = 'right'
-                    group['projection'] = V[:, :rank].to(grad.dtype) # Strictly orthogonal (no S scaling)
+                    group['projection'] = V[:, :rank].to(grad.dtype).contiguous()
                     
+                del grad_fp32, U, S, V
                 # Preserve stagger offset on first initialization
                 group['proj_step'] = self.step_count
                 state['momentum'] = None
@@ -223,6 +223,9 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
             if expert_wd != 0:
                 p.data -= expert_lr * expert_wd * p.data
             p.data -= expert_lr * delta_full.reshape(p.shape)
+
+        if torch.cuda.is_available() and (self.step_count <= 2 or self.step_count % 50 == 0):
+            torch.cuda.empty_cache()
 
     def state_dict(self):
         return {

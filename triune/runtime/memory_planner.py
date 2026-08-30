@@ -84,11 +84,11 @@ class MemoryPlanner:
 
             total_layer_params += attn_params + ffn_params
 
-        # Exit heads (reflex + limbic)
-        exit_head_params = 2 * (hidden_dim * vocab_size)
+        # Exit heads (reflex + limbic + final cortex head)
+        exit_head_params = 3 * (hidden_dim * vocab_size) + 3 * vocab_size
 
-        # Depth router
-        router_params = hidden_dim * 3
+        # Depth router + RMSNorms
+        router_params = hidden_dim * 3 + (num_layers * 2 * hidden_dim) + hidden_dim
 
         total_params = embed_params + total_layer_params + exit_head_params + router_params
 
