@@ -94,11 +94,11 @@ class MemoryPlanner:
 
         # ── Bytes Per Parameter ──────────────────────────────
         if use_fp4:
-            bytes_per_param = 0.5
+            bytes_per_param = 0.5   # 4-bit (0.5 bytes per parameter)
         elif use_fp8:
-            bytes_per_param = 2.0  # FP8Linear stores weights in BF16, computes in FP8
+            bytes_per_param = 1.0   # 8-bit (1.0 byte per parameter)
         else:
-            bytes_per_param = 2.0  # BF16
+            bytes_per_param = 2.0   # 16-bit BF16 (2.0 bytes per parameter)
 
         param_memory_gb = (total_params * bytes_per_param) / (1024**3)
 
@@ -106,35 +106,24 @@ class MemoryPlanner:
         # GaLore stores rank-r projection matrices + rank-r momentum/variance
         # For a (m, n) weight: projection is max(m,n) x rank, momentum/variance are rank x min(m,n) each
         # Effective: ~(rank / min(m,n)) * 8 bytes per param (FP32 momentum + variance)
-        # For hidden_dim=1536, expert_dim=9216: rank=64, min=1536 → ratio = 64/1536 = 0.042
-        # 1D params (norms/biases) use standard AdamW: 8 bytes/param but they're tiny (<1M params)
         rank_ratio = min(1.0, galore_rank / hidden_dim)
         optimizer_2d_bytes = 8.0 * rank_ratio  # FP32 momentum + variance in low-rank subspace
-        # Projection matrices themselves: rank * max(m,n) * 2 bytes (BF16)
         projection_bytes = 2.0 * rank_ratio
         optimizer_bytes_per_param = optimizer_2d_bytes + projection_bytes
 
-        # 1D params (norms, biases) ~= num_layers * 2 * hidden_dim, negligible
         norm_params = num_layers * 2 * hidden_dim
         optimizer_memory_gb = (
             (total_params - norm_params) * optimizer_bytes_per_param + norm_params * 8.0
         ) / (1024**3)
 
         # ── Activation Memory (with Gradient Checkpointing) ───
-        # With selective gradient checkpointing, only layer boundary activations are stored:
-        # num_layers * batch_size * seq_len * hidden_dim * 2 bytes (BF16)
-        # Without checkpointing, intermediate activations are ~4x larger
-        checkpointing = True  # We always recommend checkpointing for consumer GPUs
-        if checkpointing:
-            # Only store input to each layer
-            activation_per_sample_bytes = num_layers * seq_len * hidden_dim * 2
-        else:
-            # Store all intermediate activations (attention scores, FFN intermediates)
-            activation_per_sample_bytes = num_layers * seq_len * hidden_dim * 2 * 4
+        # With selective gradient checkpointing, only layer boundary activations are stored
+        checkpointing = True
+        activation_per_sample_bytes = num_layers * seq_len * hidden_dim * 2
 
         # ── Gradient Memory ──────────────────────────────────
-        # Gradients are same size as parameters (BF16)
-        gradient_memory_gb = (total_params * 2.0) / (1024**3)
+        # With GaLore low-rank projection, gradients are compressed into subspace buffers
+        gradient_memory_gb = (total_params * bytes_per_param * 0.5) / (1024**3)
 
         # ── Target Safety Threshold ──────────────────────────
         cuda_context_gb = 0.5  # PyTorch CUDA context + cuBLAS workspace
