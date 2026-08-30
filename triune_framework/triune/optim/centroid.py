@@ -31,25 +31,38 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
 
         self.non_expert_params = []
         self.layer_groups = []
+        seen_param_ids = set()
 
         num_groups = 0
+        # 1. Count MoE routed experts
         for name, module in model.named_modules():
             if isinstance(module, MoE_FFN):
                 for expert_idx, expert in enumerate(module.experts):
                     for subname, submod in expert.named_modules():
                         if hasattr(submod, 'weight') and isinstance(submod.weight, torch.nn.Parameter):
                             p = submod.weight
-                            if p.requires_grad and p.dim() >= 2:
+                            if p.requires_grad and p.dim() >= 2 and id(p) not in seen_param_ids:
+                                seen_param_ids.add(id(p))
                                 num_groups += 1
 
+        # 2. Count all remaining 2D parameters (Attention, Shared Experts, Dense FFNs, Exit Heads)
+        for name, param in model.named_parameters():
+            if param.requires_grad and param.dim() >= 2 and id(param) not in seen_param_ids:
+                seen_param_ids.add(id(param))
+                num_groups += 1
+
+        seen_param_ids.clear()
         group_idx = 0
+
+        # 1. Populate MoE routed experts (with Centroid Steering)
         for name, module in model.named_modules():
             if isinstance(module, MoE_FFN):
                 for expert_idx, expert in enumerate(module.experts):
                     for subname, submod in expert.named_modules():
                         if hasattr(submod, 'weight') and isinstance(submod.weight, torch.nn.Parameter):
                             p = submod.weight
-                            if p.requires_grad and p.dim() >= 2:
+                            if p.requires_grad and p.dim() >= 2 and id(p) not in seen_param_ids:
+                                seen_param_ids.add(id(p))
                                 stagger = -(group_idx * (update_gap // max(1, num_groups)))
                                 self.layer_groups.append({
                                     'module': module,
@@ -62,9 +75,25 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
                                 })
                                 group_idx += 1
 
-        expert_param_ids = {id(g['param']) for g in self.layer_groups}
+        # 2. Populate remaining 2D parameters (Standard GaLore)
         for name, param in model.named_parameters():
-            if id(param) not in expert_param_ids:
+            if param.requires_grad and param.dim() >= 2 and id(param) not in seen_param_ids:
+                seen_param_ids.add(id(param))
+                stagger = -(group_idx * (update_gap // max(1, num_groups)))
+                self.layer_groups.append({
+                    'module': None,
+                    'expert_idx': None,
+                    'param': param,
+                    'projection': None,
+                    'projection_side': 'left',
+                    'proj_step': stagger,
+                    'state': {'momentum': None, 'variance': None, 'step': 0}
+                })
+                group_idx += 1
+
+        # 3. 1D parameters (RMSNorm, biases) -> Base Optimizer
+        for name, param in model.named_parameters():
+            if id(param) not in seen_param_ids:
                 self.non_expert_params.append(param)
 
         if HAS_8BIT and AdamW8bit is not None:
@@ -131,10 +160,10 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
             side = group.get('projection_side', 'left')
 
             # ─── Centroid steering ────────────────────────────
-            centroids = module.last_centroids
+            centroids = module.last_centroids if module is not None else None
             steer_applied = False
 
-            if centroids is not None and expert_idx < centroids.size(0) and self.steer_scale > 0:
+            if centroids is not None and expert_idx is not None and expert_idx < centroids.size(0) and self.steer_scale > 0:
                 c = centroids[expert_idx]
                 target_dim = m if side == 'left' else n
                 if c.size(0) != target_dim:

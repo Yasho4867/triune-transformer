@@ -52,6 +52,7 @@ class TrainingEngine:
             for logits in (reflex, limbic, cortex):
                 token_loss = self.trainer.loss_fn(logits.reshape(-1, self.trainer.vocab_size), y_flat)
                 losses.append((token_loss * valid_mask.float()).reshape(x.size(0), -1).sum(dim=1) / valid_per_sample)
+            del reflex, limbic, cortex
             all_losses = torch.stack(losses, dim=1)
             adjusted = all_losses - self.config["bias_strength"] * (self.target_depth_dist - self.depth_usage_ema).unsqueeze(0)
             labels = adjusted.argmin(dim=1)
