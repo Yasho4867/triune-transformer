@@ -100,6 +100,45 @@ class FrameworkTest(unittest.TestCase):
         resumed.resume(checkpoint_dir / "latest.pt")
         self.assertEqual(resumed.engine.step, 1)
 
+    def test_fp8_linear_backward_dtype_mix(self):
+        from triune.model.fp8 import FP8Linear
+        layer = FP8Linear(16, 32, bias=True, dtype=torch.bfloat16)
+        x = torch.randn(2, 4, 16, dtype=torch.bfloat16, requires_grad=True)
+        out = layer(x)
+        # Simulate cross entropy float32 loss
+        loss = out.float().sum()
+        loss.backward()
+        self.assertIsNotNone(x.grad)
+        self.assertIsNotNone(layer.weight.grad)
+        self.assertIsNotNone(layer.bias.grad)
+        self.assertEqual(layer.weight.grad.dtype, torch.bfloat16)
+
+    def test_triune_model_with_fp8(self):
+        from triune.model import build_model
+        from triune.optim.factory import build_optimizer
+        config = build_config({
+            "vocab_size": 32,
+            "hidden_dim": 64,
+            "num_heads": 2,
+            "head_dim": 32,
+            "num_layers": 8,
+            "num_experts": 2,
+            "router_prefix_layers": 2,
+            "reflex_exit_layer": 3,
+            "limbic_exit_layer": 5,
+            "use_fp8": True,
+            "total_steps": 1,
+            "checkpoint_dir": "test_ckpt"
+        })
+        model = build_model(config).to(dtype=torch.bfloat16)
+        optimizer = build_optimizer(model, config)
+        input_ids = torch.randint(0, 32, (2, 8))
+        logits, route_logits = model(input_ids)
+        loss = logits.float().sum() + route_logits.float().sum()
+        loss.backward()
+        optimizer.step()
+        self.assertEqual(logits.shape, (2, 8, 32))
+
 
 if __name__ == "__main__":
     unittest.main()

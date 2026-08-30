@@ -13,7 +13,7 @@ from .centroid import AdamW8bit, CentroidSteerOptimizer, HAS_8BIT
 def build_optimizer(model, config: dict):
     """Build the configured optimizer while preserving the centroid/GaLore path."""
     if defaults.GALORE:
-        print("✅ CentroidSteerOptimizer active")
+        print("[Optim] CentroidSteerOptimizer active")
         return CentroidSteerOptimizer(
             model,
             lr=config["lr"],

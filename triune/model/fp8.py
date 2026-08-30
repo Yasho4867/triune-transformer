@@ -61,16 +61,17 @@ class _FP8MatmulFn(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        # Backward pass runs in BF16 for gradient stability
+        # Backward pass runs in weight dtype (BF16) for gradient stability
         x, weight, bias = ctx.saved_tensors
-        grad_output_flat = grad_output.reshape(-1, grad_output.shape[-1])
-        x_flat = x.reshape(-1, x.shape[-1])
+        grad_out = grad_output.to(dtype=weight.dtype, device=weight.device)
+        grad_output_flat = grad_out.reshape(-1, grad_out.shape[-1])
+        x_flat = x.to(dtype=weight.dtype).reshape(-1, x.shape[-1])
 
         grad_x = grad_output_flat @ weight  # [M, out] @ [out, in] = [M, in]
         grad_weight = grad_output_flat.t() @ x_flat  # [out, M] @ [M, in] = [out, in]
         grad_bias = grad_output_flat.sum(dim=0) if bias is not None else None
 
-        grad_x = grad_x.reshape(x.shape)
+        grad_x = grad_x.reshape(x.shape).to(dtype=x.dtype)
         return grad_x, grad_weight, grad_bias
 
 
