@@ -5,15 +5,20 @@ from .attention import *
 from .router import *
 from .moe import *
 from .norms import *
+from .fp8 import FP8Linear
 
 from .config import *
 class TransformerBlock(nn.Module):
     def __init__(self, dim, heads, layer_idx, vocab_size, exit_layers, num_experts=NUM_EXPERTS, use_moe=True, use_fp4=False, use_fp8=False):
         super().__init__()
         self.attn = HybridAttention(dim, heads, use_fp4=use_fp4)
-        self.ffn = MoE_FFN(dim, num_experts=num_experts, use_fp4=use_fp4, use_fp8=use_fp8) if use_moe else nn.Sequential(
-            nn.Linear(dim, dim*4), nn.GELU(), nn.Linear(dim*4, dim)
-        )
+        if use_moe:
+            self.ffn = MoE_FFN(dim, num_experts=num_experts, use_fp4=use_fp4, use_fp8=use_fp8)
+        else:
+            DenseLinear = FP8Linear if use_fp8 else (FP4Linear if use_fp4 else nn.Linear)
+            self.ffn = nn.Sequential(
+                DenseLinear(dim, dim*4), nn.GELU(), DenseLinear(dim*4, dim)
+            )
         self.norm1 = RMSNorm(dim)
         self.norm2 = RMSNorm(dim)
         self.layer_idx = layer_idx

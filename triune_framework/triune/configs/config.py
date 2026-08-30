@@ -47,6 +47,7 @@ def default_config() -> dict[str, Any]:
         "exploration": "linear",
         "exploration_steps": 5_000,
         "use_fp4": False,
+        "use_fp8": False,
         "steer_scale": defaults.STEER_SCALE,
         "shuffle_buffer": defaults.SHUFFLE_BUFFER,
         "dataset_name": "HuggingFaceFW/fineweb-edu",

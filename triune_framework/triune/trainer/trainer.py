@@ -98,7 +98,7 @@ class Trainer:
         self.engine.best_eval_loss = checkpoint.get("best_eval_loss", float("inf"))
         if "depth_usage_ema" in checkpoint:
             self.engine.depth_usage_ema = checkpoint["depth_usage_ema"].to(self.device)
-        self.engine.step = 0 if weights_only else checkpoint["step"] + 1
+        self.engine.step = 0 if weights_only else checkpoint["step"]
 
     def compile(self) -> None:
         self.model.forward = torch.compile(self.model.forward, fullgraph=False, dynamic=True)

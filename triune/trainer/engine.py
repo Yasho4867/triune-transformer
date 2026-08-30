@@ -52,7 +52,7 @@ class TrainingEngine:
             for logits in (reflex, limbic, cortex):
                 token_loss = self.trainer.loss_fn(logits.reshape(-1, self.trainer.vocab_size), y_flat)
                 losses.append((token_loss * valid_mask.float()).reshape(x.size(0), -1).sum(dim=1) / valid_per_sample)
-            del reflex, limbic, cortex
+            del reflex, limbic, cortex, logits
             all_losses = torch.stack(losses, dim=1)
             adjusted = all_losses - self.config["bias_strength"] * (self.target_depth_dist - self.depth_usage_ema).unsqueeze(0)
             labels = adjusted.argmin(dim=1)
@@ -122,13 +122,15 @@ class TrainingEngine:
                     with self.trainer.model_autocast():
                         logits, route_logits = self.model(x, force_depth=chosen_depth)
                     y_flat = y.reshape(-1)
-                    lm_loss = self.trainer.loss_fn(logits.reshape(-1, self.trainer.vocab_size), y_flat).mean()
+                    logits_f = logits.float()
+                    route_f = route_logits.float()
+                    lm_loss = self.trainer.loss_fn(logits_f.reshape(-1, self.trainer.vocab_size), y_flat).mean()
                     router_loss = self.trainer.router_loss_fn(route_logits, labels)
-                    z_loss = torch.logsumexp(route_logits, dim=-1).pow(2).mean()
+                    z_loss = torch.logsumexp(route_f, dim=-1).pow(2).mean()
                     # Use router's native balance loss if recorded during forward pass, else compute from softmax distribution
                     balance_loss = getattr(self.model, "last_balance_loss", None)
                     if balance_loss is None:
-                        balance_loss = (torch.softmax(route_logits, dim=-1).mean(dim=0) - self.target_depth_dist).pow(2).mean()
+                        balance_loss = (torch.softmax(route_f, dim=-1).mean(dim=0) - self.target_depth_dist).pow(2).mean()
                     micro_loss = lm_loss + 0.5 * router_loss + self.trainer.z_loss_coef * z_loss + self.config["balance_coef"] * balance_loss
                     (micro_loss / self.trainer.grad_accum).backward()
 
@@ -140,7 +142,7 @@ class TrainingEngine:
                         if isinstance(module, MoE_FFN):
                             totals["overflow"] += module.overflow_counter
                             module.overflow_counter = 0
-                    last_labels, last_route_logits = labels, route_logits
+                    last_labels, last_route_logits = labels, route_logits.detach()
 
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["grad_clip"])
                 self.optimizer.step()
@@ -177,5 +179,5 @@ class TrainingEngine:
             raise
 
         if self.step:
-            self.trainer.save_latest(self.step - 1, 0.0)
+            self.trainer.save_latest(self.step, 0.0)
         return {"step": self.step, "best_eval_loss": self.best_eval_loss}

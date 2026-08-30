@@ -101,20 +101,24 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
         else:
             self.base_optimizer = torch.optim.AdamW(self.non_expert_params, lr=lr, betas=betas, weight_decay=weight_decay)
 
-    def zero_grad(self):
-        self.base_optimizer.zero_grad()
+    def zero_grad(self, set_to_none=True):
+        self.base_optimizer.zero_grad(set_to_none=set_to_none)
         for group in self.layer_groups:
             p = group['param']
             if p.grad is not None:
-                p.grad.detach_()
-                p.grad.zero_()
+                if set_to_none:
+                    p.grad = None
+                else:
+                    p.grad.detach_()
+                    p.grad.zero_()
 
     def set_lr(self, lr):
         for pg in self.base_optimizer.param_groups:
             pg['lr'] = lr
+        self.expert_lr = lr
 
     @torch.no_grad()
-    def step(self):
+    def step(self, closure=None):
         self.step_count += 1
         self.base_optimizer.step()
 
@@ -151,6 +155,7 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
                     group['projection_side'] = 'right'
                     group['projection'] = V[:, :rank].to(grad.dtype) # Strictly orthogonal (no S scaling)
                     
+                # Preserve stagger offset on first initialization
                 group['proj_step'] = self.step_count
                 state['momentum'] = None
                 state['variance'] = None
@@ -250,7 +255,14 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
         self.base_optimizer.load_state_dict(state_dict['base_optimizer'])
         self.step_count = state_dict['step_count']
         for g, sd in zip(self.layer_groups, state_dict['layer_groups']):
-            g['projection'] = sd['projection']
+            target_device = g['param'].device
+            g['projection'] = sd['projection'].to(target_device) if sd['projection'] is not None else None
             g['projection_side'] = sd.get('projection_side', 'left')
             g['proj_step'] = sd['proj_step']
-            g['state'].update(sd['state'])
+            restored_state = {}
+            for k, v in sd['state'].items():
+                if isinstance(v, torch.Tensor):
+                    restored_state[k] = v.to(target_device)
+                else:
+                    restored_state[k] = v
+            g['state'].update(restored_state)

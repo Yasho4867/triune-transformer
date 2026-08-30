@@ -128,8 +128,9 @@ def main(argv: list[str] | None = None) -> dict:
 
     total_vram_gb = torch.cuda.get_device_properties(device).total_memory / (1024**3)
     mem_est = MemoryPlanner.estimate_vram(config, available_vram_gb=total_vram_gb)
+    precision_label = 'FP8' if config.get('use_fp8') else ('FP4' if config.get('use_fp4') else 'BF16')
     print(f"📊 [VRAM Pre-Flight Check] Available VRAM: {total_vram_gb:.2f} GB", flush=True)
-    print(f"   • Model Weights ({'FP4' if config.get('use_fp4') else 'BF16'}): ~{mem_est.param_memory_gb:.2f} GB", flush=True)
+    print(f"   • Model Weights ({precision_label}): ~{mem_est.param_memory_gb:.2f} GB", flush=True)
     print(f"   • Optimizer (GaLore Centroid): ~{mem_est.optimizer_memory_gb:.2f} GB", flush=True)
     print(f"   • Estimated Total Footprint: ~{mem_est.total_vram_gb:.2f} GB (Recommended Batch: {mem_est.recommended_batch_size}, Grad Accum: {mem_est.recommended_grad_accum})", flush=True)
 
@@ -163,11 +164,11 @@ def main(argv: list[str] | None = None) -> dict:
         eval_loader = build_dataloader(tokenizer, config, sep_token_id, is_holdout=True)
         if getattr(args, "use_fp8", False):
             precision_context = build_fp8_precision_context(device=device, use_te=False)
-            print("✅ Native FP8 (E4M3) precision context active", flush=True)
+            print("✅ Native FP8 (E4M3) scaled GEMM active in model layers", flush=True)
         elif config.get("use_fp4"):
             precision_context = build_precision_context(use_fp4=True, device=device)
         else:
-            precision_context = bf16_autocast("cuda")
+            precision_context = lambda: bf16_autocast("cuda")
 
         trainer = Trainer(
             model=model,
