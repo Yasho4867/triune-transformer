@@ -1,125 +1,76 @@
-# Triune framework guide
+# Triune Ecosystem Framework Guide
 
-## Architecture and ownership
+## Architecture Overview
 
-`config.py` is the canonical source of model and research defaults. It keeps
-the established research direction intact: GLA, depth exits, MoE, centroid
-steering, custom routing objectives, and GaLore are unchanged.
-`triune.configs.build_config()` creates one validated config dictionary per run.
+Triune is an **All-in-One AI Research Suite** featuring a standalone core Python framework (`triune`), unified CLI, embedded WebUI API server (`triune.api`), VRAM Memory Planner (`triune.runtime.MemoryPlanner`), sandboxed code execution (`triune.runtime.PythonSandbox`), and visual node plugin protocol (`triune.plugins`).
 
-| Area | Public API | Responsibility |
+```
+triune/
+├── __init__.py          # Main Exports (load_model, register_model, Trainer, MemoryPlanner)
+├── model/               # Universal Model Base, Native MoE/Limbic, Zoo Adapters
+├── trainer/             # High-level Trainer, Engine, Checkpointer
+├── runtime/             # VRAM Memory Planner, Python Sandbox, Telemetry
+├── optim/               # CentroidSteerOptimizer, GaLore, 8-bit AdamW
+├── data/                # Tokenizers, Streaming Datasets, Parquet/JSONL Loaders
+├── inference/           # Generation, KV-Cache Management, Samplers
+├── recipes/             # BF16, FP8 E4M3/Hybrid, NVFP4 Precision Recipes
+├── agents/              # Lightweight Tool-Use & Multi-Agent Engine
+├── callbacks/           # Custom Training, Logging, and Telemetry Hooks
+├── export/              # SafeTensors, GGUF, and ONNX Exporters
+├── api/                 # Embedded FastAPI & WebSockets (OpenAI Spec & Telemetry)
+└── plugins/             # Node-based Visual Pipeline Schema & Custom Node Registry
+```
+
+## Public API & Component Map
+
+| Component | Public API | Responsibility |
 | --- | --- | --- |
-| Model | `triune.model.build_model(config)` | Builds the Triune architecture. |
-| Data | `triune.data.load_tokenizer`, `build_dataloader` | BPE loading and streaming train/eval data. |
-| Optimizer | `triune.optim.factory.build_optimizer` | Centroid-steered GaLore / fallback optimizer. |
-| Precision | `triune.recipes.build_precision_context` | BF16 or Transformer Engine NVFP4 context. |
-| Training | `triune.trainer.Trainer` | Train, evaluate, log, checkpoint, resume. |
-| Inference | `triune.inference` | Checkpoint loading and text generation. |
+| Model Zoo | `triune.load_model("triune-base")`, `register_model` | Loads native, HF, or user custom models. |
+| VRAM Planner | `triune.MemoryPlanner.estimate_vram(config)` | Auto-budgets VRAM for RTX 5070 / target GPUs. |
+| Sandboxed Code | `triune.PythonSandbox` | Safely executes custom loss ops, nodes, & agent tools. |
+| Custom Nodes | `triune.register_node(name)` | Registers custom visual nodes into Studio & CLI. |
+| Agent Engine | `triune.Agent`, `MultiAgentOrchestrator` | Multi-agent execution and tool calling. |
+| Exporters | `triune.export_safetensors`, `export_gguf`, `export_onnx` | One-command model weight exports. |
+| Precision | `triune.build_fp8_precision_context`, `bf16_autocast` | FP8 (E4M3/HYBRID), BF16, or NVFP4 context. |
+| Embedded API | `triune.api.run_server(host, port)` | Powers Triune Studio (OpenAI spec `/v1/chat/completions`). |
 
-Evaluation batches are materialized once from a bounded stream. Training starts
-after that reserved stream region, so it cannot accidentally train on the
-evaluation slice.
-
-## Environment
-
-The project needs PyTorch with CUDA, `datasets`, `tokenizers`,
-`flash-linear-attention`, and optionally `bitsandbytes` and `wandb`.
-
-For the current custom Transformer Engine build:
+## CLI Commands
 
 ```bash
-cd /mnt/c/Users/yashb_f1ls/OneDrive/Documents/TriuneTransformer
-export PYTHONPATH=/home/yasho4867/TransformerEngine_Native/TransformerEngine:$PYTHONPATH
+# Launch embedded API server for Triune Studio
+triune serve --port 8000
+
+# Estimate VRAM budget for RTX 5070 Laptop GPU (8GB / 12GB)
+triune plan-memory --vram-gb 8.0
+
+# Terminal interactive chat
+triune chat --model triune-base
+
+# Execute framework test suite
+wsl /home/yasho4867/venvs/triune/bin/python tests/test_framework.py
 ```
 
-NVFP4 requires Transformer Engine with `NVFP4BlockScaling` support and a
-Blackwell-class GPU (SM100+). The training command checks both before starting.
-
-## Commands
-
-### Train
-
-```bash
-# Fresh NVFP4 run
-python scripts/train.py --fresh --use_fp4
-
-# Fresh BF16 run
-python scripts/train.py --fresh
-
-# Typical overrides
-python scripts/train.py --fresh --use_fp4 \
-  --batch_size 8 --grad_accum_steps 4 --seq_len 256 \
-  --total_steps 50000 --lr 1e-4
-
-# Disable external logging and HF token prompt
-python scripts/train.py --fresh --no_wandb --no_hf_login
-```
-
-### Resume
-
-```bash
-# Restore model, optimizer, step, router EMA, and W&B run identity
-python scripts/train.py --resume_latest checkpoints_full/latest.pt --use_fp4
-
-# Load best weights only; optimizer and LR schedule restart
-python scripts/train.py --resume_best --use_fp4
-```
-
-### Chat and utilities
-
-```bash
-python scripts/chat.py --checkpoint checkpoints_full/best.pt
-python scripts/tokenizer.py --output triune_tokenizer.json
-python scripts/gpucheck.py
-python scripts/debug.py
-python scripts/profile_model.py --checkpoint checkpoints_full/latest.pt
-python tests/test_framework.py
-```
-
-In chat, prefix the prompt with `reflex `, `limbic `, `cortex `, or `auto ` to
-choose a depth route.
-
-## Programmatic use
+## Programmatic Usage Example
 
 ```python
 import torch
+import triune
 
-from triune.configs import build_config
-from triune.data import build_dataloader, load_tokenizer
-from triune.model import build_model
-from triune.optim.factory import build_optimizer
-from triune.recipes import build_precision_context
-from triune.trainer import NullLogger, Trainer
+# 1. Estimate VRAM Memory Plan for Laptop GPU
+config = triune.build_config({})
+plan = triune.MemoryPlanner.estimate_vram(config, target_vram_gb=8.0)
+print("Recommended Batch Size:", plan.recommended_batch_size)
 
-config = build_config({"use_fp4": True})
-tokenizer = load_tokenizer("triune_tokenizer.json")
-config["vocab_size"] = tokenizer.get_vocab_size()
-device = torch.device("cuda")
-sep_id = tokenizer.token_to_id("[SEP]")
+# 2. Load Model via Model Zoo API
+model = triune.load_model("triune-base").cuda()
 
-model = build_model(config).to(device).bfloat16()
-trainer = Trainer(
-    model=model,
-    optimizer=build_optimizer(model, config),
-    train_loader=build_dataloader(tokenizer, config, sep_id, is_holdout=False),
-    eval_loader=build_dataloader(tokenizer, config, sep_id, is_holdout=True),
-    tokenizer=tokenizer,
-    config=config,
-    device=device,
-    precision_context=build_precision_context(use_fp4=config["use_fp4"], device=device),
-    logger=NullLogger(),
-)
-trainer.fit()
+# 3. Register Custom Node for Studio & CLI
+@triune.register_node("Custom Preprocessor", category="data")
+def custom_preprocessor(text: str) -> str:
+    return text.strip().lower()
+
+# 4. Safe Code Execution inside Sandbox
+sandbox = triune.PythonSandbox()
+result = sandbox.execute_code("y = x * 2", locals_dict={"x": 10})
+print(result["y"])  # 20
 ```
-
-## Checkpoints
-
-The default checkpoint directory is `checkpoints_full`.
-
-- `latest.pt` is written periodically, at normal completion, and before an
-  unhandled exception is re-raised.
-- `best.pt` is written when Cortex evaluation loss improves.
-
-Checkpoints contain model parameters, optimizer state, config, depth-usage EMA,
-best evaluation loss, training step, and W&B run ID. Compiled-forward keys are
-normalized during restoration.

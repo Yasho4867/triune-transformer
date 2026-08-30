@@ -40,7 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--total_steps", type=int)
     parser.add_argument("--batch_size", type=int)
     parser.add_argument("--grad_accum_steps", type=int)
-    parser.add_argument("--grad_checkpoint", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--save_every", type=int)
+    parser.add_argument("--log_every", type=int)
     parser.add_argument("--eval_every", type=int)
     parser.add_argument("--eval_batches", type=int)
     parser.add_argument("--target_depth_dist", type=_depth_distribution)
@@ -53,7 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--use_fp4", "--use_nvfp4", dest="use_fp4", action="store_true")
     parser.add_argument("--no_wandb", action="store_true")
     parser.add_argument("--no_hf_login", action="store_true")
+    parser.add_argument("--model_name", choices=("triune-small", "triune-base", "triune-moe"), default=None)
+    parser.add_argument("--num_layers", type=int)
+    parser.add_argument("--num_experts", type=int)
     parser.add_argument("--tokenizer_path", type=Path, default=Path("triune_tokenizer.json"))
+    parser.add_argument("--shuffle_buffer", type=int)
     parser.add_argument("--dataset_name")
     parser.add_argument("--dataset_config")
     parser.add_argument("--num_workers", type=int)
@@ -89,11 +94,21 @@ def main(argv: list[str] | None = None) -> dict:
         key: getattr(args, key)
         for key in (
             "checkpoint_dir", "seq_len", "lr", "total_steps", "batch_size", "grad_accum_steps",
-            "eval_every", "eval_batches", "target_depth_dist", "usage_ema_decay", "bias_strength",
+            "save_every", "log_every", "eval_every", "eval_batches", "target_depth_dist", "usage_ema_decay", "bias_strength",
             "balance_coef", "exploration", "exploration_steps", "steer_scale", "dataset_name",
-            "dataset_config", "num_workers",
+            "dataset_config", "num_workers", "num_layers", "num_experts", "shuffle_buffer",
         )
     }
+    if args.model_name == "triune-small":
+        overrides.setdefault("num_layers", 18)
+        overrides.setdefault("num_experts", 4)
+    elif args.model_name == "triune-base":
+        overrides.setdefault("num_layers", 24)
+        overrides.setdefault("num_experts", 8)
+    elif args.model_name == "triune-moe":
+        overrides.setdefault("num_layers", 32)
+        overrides.setdefault("num_experts", 16)
+
     overrides["checkpoint_dir"] = str(overrides["checkpoint_dir"]) if overrides["checkpoint_dir"] else None
     overrides["use_fp4"] = args.use_fp4
     config = build_config(overrides)
@@ -105,7 +120,7 @@ def main(argv: list[str] | None = None) -> dict:
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
     os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
-    print(f"✅ GPU: {torch.cuda.get_device_name(device)}")
+    print(f"✅ GPU: {torch.cuda.get_device_name(device)}", flush=True)
     if not args.no_hf_login:
         _request_hf_token()
 
@@ -122,8 +137,8 @@ def main(argv: list[str] | None = None) -> dict:
         model = build_model(config).to(device).bfloat16()
         if args.grad_checkpoint is not False:
             model.gradient_checkpointing_enable()
-            print("✅ Selective gradient checkpointing enabled")
-        print(f"Params: {sum(parameter.numel() for parameter in model.parameters()):,}")
+            print("✅ Selective gradient checkpointing enabled", flush=True)
+        print(f"Params: {sum(parameter.numel() for parameter in model.parameters()):,}", flush=True)
         optimizer = build_optimizer(model, config)
         train_loader = build_dataloader(tokenizer, config, sep_token_id, is_holdout=False)
         eval_loader = build_dataloader(tokenizer, config, sep_token_id, is_holdout=True)
@@ -140,13 +155,13 @@ def main(argv: list[str] | None = None) -> dict:
         )
         if args.compile:
             trainer.compile()
-            print("✅ torch.compile enabled")
+            print("✅ torch.compile enabled", flush=True)
         if resume_path and not args.fresh:
             trainer.resume(resume_path, weights_only=args.resume_best)
-            print(f"✅ Resumed from {resume_path}")
+            print(f"✅ Resumed from {resume_path}", flush=True)
         elif args.fresh:
-            print("🆕 Fresh start")
-        print(f"🚀 Training from step {trainer.engine.step} to {config['total_steps']}")
+            print("🆕 Fresh start", flush=True)
+        print(f"🚀 Training from step {trainer.engine.step} to {config['total_steps']}", flush=True)
         return trainer.fit()
     finally:
         logger.finish()

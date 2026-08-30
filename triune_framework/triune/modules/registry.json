@@ -1,0 +1,80 @@
+[
+  {
+    "id": "triune-base-weights",
+    "name": "Triune-Base 2.5B MoE Weights",
+    "author": "Triune AI Core",
+    "type": "model",
+    "version": "1.2.0",
+    "description": "Standard 24-layer MoE checkpoint with 8 experts and 3 exit heads (Reflex, Limbic, Cortex). Optimized for fast local inference.",
+    "repo_url": "https://github.com/Yash-456/triune-transformer",
+    "download_url": "https://github.com/Yash-456/triune-transformer/releases/download/v1.2.0/triune-base.safetensors",
+    "size_mb": 4800,
+    "tags": ["MoE", "2.5B", "Recommended", "Native"],
+    "requires_cuda": false
+  },
+  {
+    "id": "code-assistant-lora",
+    "name": "Python & Rust Code Tuning Adapter",
+    "author": "Community",
+    "type": "adapter",
+    "version": "1.0.4",
+    "description": "LoRA rank-16 adapter trained on FineWeb & StarCoder Python/Rust dataset. Plugs directly into TriuneTransformer query/value projections.",
+    "repo_url": "https://github.com/huggingface/transformers",
+    "download_url": "https://github.com/Yash-456/triune-transformer/releases/download/v1.0.0/code-lora-r16.safetensors",
+    "size_mb": 64,
+    "tags": ["LoRA", "Coding", "r=16"],
+    "requires_cuda": false
+  },
+  {
+    "id": "fineweb-sample-10k",
+    "name": "FineWeb Curated 10K Sample Dataset",
+    "author": "HuggingFace / Triune",
+    "type": "dataset",
+    "version": "2.0.0",
+    "description": "Cleaned pre-tokenized BPE subset of FineWeb for rapid local evaluation and synthetic router label benchmark generation.",
+    "repo_url": "https://huggingface.co/datasets/HuggingFaceFW/fineweb",
+    "download_url": "https://huggingface.co/datasets/HuggingFaceFW/fineweb/resolve/main/data/sample-10k.jsonl",
+    "size_mb": 120,
+    "tags": ["Dataset", "Pre-tokenized", "BPE"],
+    "requires_cuda": false
+  },
+  {
+    "id": "custom-loss-nodes",
+    "name": "Extended Router & Custom Loss Layer Nodes",
+    "author": "Triune Research",
+    "type": "plugin",
+    "version": "1.1.0",
+    "description": "Custom DAG visual nodes including Centroid Router Bias, Focal Exit Loss, and Quantized Linear Attention execution handlers.",
+    "repo_url": "https://github.com/Yash-456/triune-transformer",
+    "download_url": "https://github.com/Yash-456/triune-transformer/archive/refs/heads/main.zip",
+    "size_mb": 12,
+    "tags": ["DAG Nodes", "Plugin", "Loss Functions"],
+    "requires_cuda": false
+  },
+  {
+    "id": "flash-attn-package",
+    "name": "FlashAttention-2 CUDA Kernels",
+    "author": "Dao-AILab",
+    "type": "framework",
+    "version": "2.5.6",
+    "description": "Fast memory-efficient attention algorithms for NVIDIA Ampere, Ada, and Hopper GPUs. Significantly improves throughput.",
+    "repo_url": "https://github.com/Dao-AILab/flash-attention",
+    "download_url": "https://github.com/Dao-AILab/flash-attention/releases",
+    "size_mb": 240,
+    "tags": ["CUDA", "GPU Only", "Speedup"],
+    "requires_cuda": true
+  },
+  {
+    "id": "bitsandbytes-quant",
+    "name": "BitsAndBytes 8-bit & 4-bit Quantization Engine",
+    "author": "Tim Dettmers",
+    "type": "framework",
+    "version": "0.43.0",
+    "description": "Enables FP4, NF4, and Int8 matrix multiplication for extreme VRAM savings on consumer GPUs.",
+    "repo_url": "https://github.com/bitsandbytes-foundation/bitsandbytes",
+    "download_url": "https://github.com/bitsandbytes-foundation/bitsandbytes/releases",
+    "size_mb": 85,
+    "tags": ["Quantization", "NF4", "VRAM Saver"],
+    "requires_cuda": false
+  }
+]
