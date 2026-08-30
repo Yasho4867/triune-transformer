@@ -45,14 +45,14 @@ class _FP8MatmulFn(torch.autograd.Function):
         w_fp8, scale_w = _quantize_to_fp8(weight)
 
         # Execute hardware FP8 GEMM via torch._scaled_mm
-        # _scaled_mm returns (output, amax) tuple
-        out, _amax = torch._scaled_mm(
+        res = torch._scaled_mm(
             x_fp8,
             w_fp8.t().contiguous(),
             scale_a=scale_x,
             scale_b=scale_w,
             out_dtype=x.dtype,
         )
+        out = res[0] if isinstance(res, (tuple, list)) else res
 
         if bias is not None:
             out = out + bias
