@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--total_steps", type=int)
     parser.add_argument("--batch_size", type=int)
     parser.add_argument("--grad_accum_steps", type=int)
+    parser.add_argument("--grad_checkpoint", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--save_every", type=int)
     parser.add_argument("--log_every", type=int)
     parser.add_argument("--eval_every", type=int)
