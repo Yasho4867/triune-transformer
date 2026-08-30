@@ -16,24 +16,15 @@ export PYTHONPATH=/home/yasho4867/TransformerEngine_Native/TransformerEngine:$PY
 python scripts/train.py --fresh --use_fp4
 ```
 
-See [the framework guide](docs/FRAMEWORK.md) for all commands, checkpoint
-behavior, Python APIs, configuration, and NVFP4 requirements.
+## Documentation
 
-## Layout
+- 📘 [Dynamic & Modular Architecture Guide](docs/DYNAMIC_MODULAR_GUIDE.md) - How to customize layers, MoE experts, head dimensions, VRAM budgeting, and CLI options.
+- 📐 [Mathematical Foundations & Proofs](docs/MATH_FOUNDATIONS.md) - Formal LaTeX proofs for GLA covariance, dual-sided GaLore subspace projections, and Gumbel-Softmax ST routing.
+- 🛠️ [Operational Framework Guide](docs/FRAMEWORK.md) - Training APIs, memory planner, checkpointing, and Studio API endpoints.
 
-```text
-triune/             Reusable model, data, optimizer, recipes, trainer, inference
-scripts/            Thin command-line entry points
-tests/              Dependency-free framework smoke test
-config.py           Canonical research and model defaults
-docs/FRAMEWORK.md   Operational guide
-```
-
-## Verify the framework
+## Verify the Framework
 
 ```bash
+# Run framework smoke tests (CPU/CUDA)
 python tests/test_framework.py
 ```
-
-This runs a CPU-sized one-step training and checkpoint-resume test; it does
-not allocate the production model.

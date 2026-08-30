@@ -8,10 +8,10 @@ from .norms import *
 
 from .config import *
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, heads, layer_idx, vocab_size, exit_layers, use_moe=True, use_fp4=True):
+    def __init__(self, dim, heads, layer_idx, vocab_size, exit_layers, num_experts=NUM_EXPERTS, use_moe=True, use_fp4=True):
         super().__init__()
         self.attn = HybridAttention(dim, heads, use_fp4=use_fp4)
-        self.ffn = MoE_FFN(dim, use_fp4=use_fp4) if use_moe else nn.Sequential(
+        self.ffn = MoE_FFN(dim, num_experts=num_experts, use_fp4=use_fp4) if use_moe else nn.Sequential(
             nn.Linear(dim, dim*4), nn.GELU(), nn.Linear(dim*4, dim)
         )
         self.norm1 = RMSNorm(dim)

@@ -119,8 +119,22 @@ def main(argv: list[str] | None = None) -> dict:
     device = torch.device("cuda")
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     os.environ.setdefault("HF_XET_HIGH_PERFORMANCE", "1")
-    print(f"✅ GPU: {torch.cuda.get_device_name(device)}", flush=True)
+    from triune.runtime.memory_planner import MemoryPlanner
+
+    total_vram_gb = torch.cuda.get_device_properties(device).total_memory / (1024**3)
+    mem_est = MemoryPlanner.estimate_vram(config, available_vram_gb=total_vram_gb)
+    print(f"📊 [VRAM Pre-Flight Check] Available VRAM: {total_vram_gb:.2f} GB", flush=True)
+    print(f"   • Model Weights ({'FP4' if config.get('use_fp4') else 'BF16'}): ~{mem_est.param_memory_gb:.2f} GB", flush=True)
+    print(f"   • Optimizer (GaLore Centroid): ~{mem_est.optimizer_memory_gb:.2f} GB", flush=True)
+    print(f"   • Estimated Total Footprint: ~{mem_est.total_vram_gb:.2f} GB (Recommended Batch: {mem_est.recommended_batch_size}, Grad Accum: {mem_est.recommended_grad_accum})", flush=True)
+
+    if mem_est.total_vram_gb > total_vram_gb * 0.90:
+        print(f"⚠️ [VRAM Warning] Configuration ({mem_est.total_vram_gb:.2f} GB) is near or exceeds safe threshold for your {total_vram_gb:.2f} GB GPU.", flush=True)
+        if args.model_name == "triune-base" or config.get("num_layers", 24) >= 24:
+            print("💡 Recommended Action: Use '--model_name triune-small' (18 layers, 4 experts, ~3.9 GB total VRAM) for seamless training on 8GB VRAM.", flush=True)
+
     if not args.no_hf_login:
         _request_hf_token()
 
@@ -134,7 +148,9 @@ def main(argv: list[str] | None = None) -> dict:
         sep_token_id = tokenizer.token_to_id("[SEP]")
         if sep_token_id is None:
             raise ValueError("Tokenizer must define a [SEP] special token")
-        model = build_model(config).to(device).bfloat16()
+        
+        # Allocate model directly in bfloat16 to avoid float32 VRAM spikes
+        model = build_model(config).to(device=device, dtype=torch.bfloat16)
         if args.grad_checkpoint is not False:
             model.gradient_checkpointing_enable()
             print("✅ Selective gradient checkpointing enabled", flush=True)

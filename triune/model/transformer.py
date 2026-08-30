@@ -9,29 +9,46 @@ from .config import *
 
 
 class TriuneTransformer(nn.Module):
-    def __init__(self, vocab_size=VOCAB_SIZE, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS, use_fp4=True):
+    def __init__(
+        self,
+        vocab_size: int = VOCAB_SIZE,
+        hidden_dim: int = HIDDEN_DIM,
+        num_layers: int = NUM_LAYERS,
+        num_heads: int = NUM_HEADS,
+        head_dim: int = GLA_HEAD_DIM,
+        num_experts: int = NUM_EXPERTS,
+        router_prefix_layers: int = ROUTER_PREFIX_LAYERS,
+        reflex_exit_layer: int = REFLEX_EXIT_LAYER,
+        limbic_exit_layer: int = LIMBIC_EXIT_LAYER,
+        use_fp4: bool = True,
+    ):
         super().__init__()
-        if num_layers <= LIMBIC_EXIT_LAYER:
+        if num_layers <= limbic_exit_layer:
             raise ValueError(
-                f"num_layers must exceed LIMBIC_EXIT_LAYER ({LIMBIC_EXIT_LAYER}); got {num_layers}"
+                f"num_layers must exceed limbic_exit_layer ({limbic_exit_layer}); got {num_layers}"
             )
-        expected_hidden_dim = NUM_HEADS * GLA_HEAD_DIM
+        expected_hidden_dim = num_heads * head_dim
         if hidden_dim != expected_hidden_dim:
             raise ValueError(
-                f"hidden_dim ({hidden_dim}) must equal NUM_HEADS * GLA_HEAD_DIM ({expected_hidden_dim})"
+                f"hidden_dim ({hidden_dim}) must equal num_heads * head_dim ({expected_hidden_dim})"
             )
         self.num_layers = num_layers
-        self.router_prefix_layers = ROUTER_PREFIX_LAYERS
-        self.reflex_exit_layer = REFLEX_EXIT_LAYER
-        self.limbic_exit_layer = LIMBIC_EXIT_LAYER
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.num_experts = num_experts
+        self.router_prefix_layers = router_prefix_layers
+        self.reflex_exit_layer = reflex_exit_layer
+        self.limbic_exit_layer = limbic_exit_layer
         self.token_embed = nn.Embedding(vocab_size, hidden_dim)
         self.layers = nn.ModuleList([
             TransformerBlock(
-                hidden_dim,
-                NUM_HEADS,
-                i,
-                vocab_size,
-                (self.reflex_exit_layer, self.limbic_exit_layer),
+                dim=hidden_dim,
+                heads=num_heads,
+                layer_idx=i,
+                vocab_size=vocab_size,
+                exit_layers=(self.reflex_exit_layer, self.limbic_exit_layer),
+                num_experts=num_experts,
                 use_moe=(i > self.reflex_exit_layer),
                 use_fp4=use_fp4,
             )
@@ -46,11 +63,11 @@ class TriuneTransformer(nn.Module):
     def _init_weights(self):
         for m in self.modules():
             if hasattr(m, 'weight') and isinstance(m, (nn.Linear, getattr(te, 'Linear', nn.Linear))):
-                nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                nn.init.trunc_normal_(m.weight, std=0.02)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Embedding):
-                nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                nn.init.trunc_normal_(m.weight, std=0.02)
 
     def gradient_checkpointing_enable(self):
         self._use_gradient_checkpointing = True
