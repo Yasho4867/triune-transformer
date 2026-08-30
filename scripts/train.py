@@ -129,10 +129,13 @@ def main(argv: list[str] | None = None) -> dict:
     total_vram_gb = torch.cuda.get_device_properties(device).total_memory / (1024**3)
     mem_est = MemoryPlanner.estimate_vram(config, available_vram_gb=total_vram_gb)
     precision_label = 'FP8' if config.get('use_fp8') else ('FP4' if config.get('use_fp4') else 'BF16')
-    print(f"📊 [VRAM Pre-Flight Check] Available VRAM: {total_vram_gb:.2f} GB", flush=True)
-    print(f"   • Model Weights ({precision_label}): ~{mem_est.param_memory_gb:.2f} GB", flush=True)
+    print(f"📊 [VRAM Pre-Flight Check] Detected GPU: {torch.cuda.get_device_name(device)} ({total_vram_gb:.2f} GB VRAM)", flush=True)
+    print(f"   • Total Parameters:          {mem_est.total_params:,}", flush=True)
+    print(f"   • Model Weights ({precision_label}):       ~{mem_est.param_memory_gb:.2f} GB", flush=True)
     print(f"   • Optimizer (GaLore Centroid): ~{mem_est.optimizer_memory_gb:.2f} GB", flush=True)
-    print(f"   • Estimated Total Footprint: ~{mem_est.total_vram_gb:.2f} GB (Recommended Batch: {mem_est.recommended_batch_size}, Grad Accum: {mem_est.recommended_grad_accum})", flush=True)
+    print(f"   • Activations (Checkpointed):  ~{mem_est.activation_memory_gb:.2f} GB", flush=True)
+    print(f"   • Gradients (BF16 Active):     ~{mem_est.gradient_memory_gb:.2f} GB", flush=True)
+    print(f"   • Estimated Total Footprint:   ~{mem_est.total_vram_gb:.2f} GB (Recommended Batch: {mem_est.recommended_batch_size}, Grad Accum: {mem_est.recommended_grad_accum})", flush=True)
 
     if mem_est.total_vram_gb > total_vram_gb * 0.90:
         print(f"⚠️ [VRAM Warning] Configuration ({mem_est.total_vram_gb:.2f} GB) is near or exceeds safe threshold for your {total_vram_gb:.2f} GB GPU.", flush=True)
