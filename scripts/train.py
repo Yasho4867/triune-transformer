@@ -17,7 +17,7 @@ from triune.configs.config import build_config
 from triune.data import build_dataloader, load_tokenizer
 from triune.model import build_model
 from triune.optim.factory import build_optimizer
-from triune.recipes import build_precision_context
+from triune.recipes import bf16_autocast, build_fp8_precision_context, build_precision_context
 from triune.trainer import NullLogger, Trainer, WandbLogger
 
 
@@ -53,6 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--exploration_steps", type=int)
     parser.add_argument("--steer_scale", type=float)
     parser.add_argument("--use_fp4", "--use_nvfp4", dest="use_fp4", action="store_true")
+    parser.add_argument("--use_fp8", action="store_true", help="Enable native FP8 (E4M3) precision context")
     parser.add_argument("--no_wandb", action="store_true")
     parser.add_argument("--no_hf_login", action="store_true")
     parser.add_argument("--model_name", choices=("triune-small", "triune-base", "triune-moe"), default=None)
@@ -159,6 +160,14 @@ def main(argv: list[str] | None = None) -> dict:
         optimizer = build_optimizer(model, config)
         train_loader = build_dataloader(tokenizer, config, sep_token_id, is_holdout=False)
         eval_loader = build_dataloader(tokenizer, config, sep_token_id, is_holdout=True)
+        if getattr(args, "use_fp8", False):
+            precision_context = build_fp8_precision_context(device=device, use_te=False)
+            print("✅ Native FP8 (E4M3) precision context active", flush=True)
+        elif config.get("use_fp4"):
+            precision_context = build_precision_context(use_fp4=True, device=device)
+        else:
+            precision_context = bf16_autocast("cuda")
+
         trainer = Trainer(
             model=model,
             optimizer=optimizer,
@@ -167,7 +176,7 @@ def main(argv: list[str] | None = None) -> dict:
             tokenizer=tokenizer,
             config=config,
             device=device,
-            precision_context=build_precision_context(use_fp4=config["use_fp4"], device=device),
+            precision_context=precision_context,
             logger=logger,
         )
         if args.compile:
