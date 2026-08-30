@@ -19,5 +19,6 @@ def build_model(config: dict | None = None) -> TriuneTransformer:
         router_prefix_layers=config.get("router_prefix_layers", 3),
         reflex_exit_layer=config.get("reflex_exit_layer", 6),
         limbic_exit_layer=config.get("limbic_exit_layer", 16),
-        use_fp4=config.get("use_fp4", True),
+        use_fp4=config.get("use_fp4", False),
+        use_fp8=config.get("use_fp8", False),
     )

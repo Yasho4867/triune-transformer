@@ -3,19 +3,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .fp4 import *
+from .fp8 import FP8Linear
 from .norms import *
 
 from .config import *
 import math
 class MoE_FFN(nn.Module):
-    def __init__(self, dim, num_experts=NUM_EXPERTS, top_k=TOP_K_EXPERTS, use_fp4=True, shared_expert=SHARED_EXPERT):
+    def __init__(self, dim, num_experts=NUM_EXPERTS, top_k=TOP_K_EXPERTS, use_fp4=False, use_fp8=False, shared_expert=SHARED_EXPERT):
         super().__init__()
         self.num_experts = num_experts
         self.top_k = top_k
         self.dim = dim
         self.shared_expert = shared_expert
         self.shared_scale = SHARED_EXPERT_SCALE
-        LinearCls = FP4Linear if use_fp4 else nn.Linear
+        if use_fp8:
+            LinearCls = FP8Linear
+        elif use_fp4:
+            LinearCls = FP4Linear
+        else:
+            LinearCls = nn.Linear
 
         self.experts = nn.ModuleList([
             nn.Sequential(

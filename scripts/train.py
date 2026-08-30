@@ -113,6 +113,7 @@ def main(argv: list[str] | None = None) -> dict:
 
     overrides["checkpoint_dir"] = str(overrides["checkpoint_dir"]) if overrides["checkpoint_dir"] else None
     overrides["use_fp4"] = args.use_fp4
+    overrides["use_fp8"] = args.use_fp8
     config = build_config(overrides)
     Path(config["checkpoint_dir"]).mkdir(parents=True, exist_ok=True)
 

@@ -20,7 +20,8 @@ class TriuneTransformer(nn.Module):
         router_prefix_layers: int = ROUTER_PREFIX_LAYERS,
         reflex_exit_layer: int = REFLEX_EXIT_LAYER,
         limbic_exit_layer: int = LIMBIC_EXIT_LAYER,
-        use_fp4: bool = True,
+        use_fp4: bool = False,
+        use_fp8: bool = False,
     ):
         super().__init__()
         if num_layers <= limbic_exit_layer:
@@ -51,6 +52,7 @@ class TriuneTransformer(nn.Module):
                 num_experts=num_experts,
                 use_moe=(i > self.reflex_exit_layer),
                 use_fp4=use_fp4,
+                use_fp8=use_fp8,
             )
             for i in range(num_layers)
         ])
