@@ -171,23 +171,23 @@ class CentroidSteerOptimizer(torch.optim.Optimizer):
                     first_linear = expert[0]
                     w = first_linear.linear.weight if isinstance(first_linear, FP4Linear) else first_linear.weight
                     b = first_linear.linear.bias if isinstance(first_linear, FP4Linear) else first_linear.bias
-                    c_projected = F.linear(c.unsqueeze(0), w, b).squeeze(0)
+                    c_projected = F.linear(c.unsqueeze(0).to(device=w.device, dtype=w.dtype), w, b).squeeze(0)
                 else:
-                    c_projected = c
+                    c_projected = c.to(device=proj.device, dtype=proj.dtype)
 
                 c_norm = c_projected.norm()
                 if c_norm > 1e-8:
-                    c_hat = c_projected / c_norm
+                    c_hat = (c_projected / c_norm).to(device=proj.device, dtype=proj.dtype)
                     c_proj = proj @ (proj.T @ c_hat)
                     c_res = c_hat - c_proj
                     c_res_norm = c_res.norm()
                     if c_res_norm > 1e-8:
-                        c_orth = c_res / c_res_norm
-                        proj_aug = torch.cat([proj, self.steer_scale * c_orth.unsqueeze(1)], dim=1)
+                        c_orth = (c_res / c_res_norm).to(device=proj.device, dtype=proj.dtype)
+                        proj_aug = torch.cat([proj, (self.steer_scale * c_orth).unsqueeze(1)], dim=1)
                         steer_applied = True
 
             if not steer_applied:
-                zero_vec = torch.zeros(m if side == 'left' else n, 1, dtype=grad.dtype, device=grad.device)
+                zero_vec = torch.zeros(m if side == 'left' else n, 1, dtype=proj.dtype, device=proj.device)
                 proj_aug = torch.cat([proj, zero_vec], dim=1)
 
             # Gradient projection & Adam step
