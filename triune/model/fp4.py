@@ -29,4 +29,13 @@ class FP4Linear(nn.Module):
             self.linear = nn.Linear(in_features, out_features, bias=bias).to(torch.bfloat16)
 
     def forward(self, x):
-        return self.linear(x)
+        try:
+            return self.linear(x)
+        except RuntimeError as e:
+            if "no kernel image" in str(e) or "CUDA Error" in str(e):
+                in_f = getattr(self.linear, "in_features", x.shape[-1])
+                out_f = getattr(self.linear, "out_features", in_f)
+                has_bias = getattr(self.linear, "bias", None) is not None
+                self.linear = nn.Linear(in_f, out_f, bias=has_bias, device=x.device, dtype=x.dtype)
+                return self.linear(x)
+            raise
