@@ -143,6 +143,9 @@ class TrainingEngine:
 
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config["grad_clip"])
                 self.optimizer.step()
+                for module in self.model.modules():
+                    if isinstance(module, MoE_FFN) and hasattr(module, "step_bias"):
+                        module.step_bias()
                 for key in ("loss", "lm", "router", "balance"):
                     totals[key] /= self.trainer.grad_accum
 

@@ -33,11 +33,8 @@ class TransformerBlock(nn.Module):
             norm2_x = self.norm2(x)
             if isinstance(self.ffn, MoE_FFN):
                 ffn_out = torch.utils.checkpoint.checkpoint(
-                    lambda hidden: self.ffn(hidden, update_stats=False),
-                    norm2_x, use_reentrant=False
+                    self.ffn, norm2_x, use_reentrant=False
                 )
-                if update_stats:
-                    self.ffn.update_routing_stats(norm2_x)
             else:
                 ffn_out = torch.utils.checkpoint.checkpoint(
                     self.ffn, norm2_x, use_reentrant=False

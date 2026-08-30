@@ -107,8 +107,7 @@ class MoE_FFN(nn.Module):
         """Update non-gradient routing state without retaining an activation graph."""
         counts = torch.bincount(flat_idx.flatten(), minlength=self.num_experts)
         target = (flat_x.size(0) * self.top_k) / self.num_experts
-        self.expert_bias -= (counts - target).sign() * MOE_BIAS_UPDATE_RATE
-        self.expert_bias.clamp_(-5.0, 5.0)
+        self._pending_bias_update = -(counts - target).sign() * MOE_BIAS_UPDATE_RATE
 
         centroids = []
         for expert_idx in range(self.num_experts):
@@ -118,6 +117,13 @@ class MoE_FFN(nn.Module):
             else:
                 centroids.append(torch.zeros(self.dim, device=flat_x.device, dtype=flat_x.dtype))
         self.last_centroids = torch.stack(centroids)
+
+    @torch.no_grad()
+    def step_bias(self):
+        """Apply pending bias updates after backward is complete."""
+        if hasattr(self, "_pending_bias_update") and self._pending_bias_update is not None:
+            self.expert_bias.add_(self._pending_bias_update.to(self.expert_bias.device)).clamp_(-5.0, 5.0)
+            self._pending_bias_update = None
 
     @torch.no_grad()
     def update_routing_stats(self, x):
